@@ -4,13 +4,17 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx demo.ts"
+    "dev:cube": "tsx demo.ts examples/cube.scad",
+    "dev:modules": "tsx demo.ts examples/modules.scad",
+    "dev:boolean_ops": "tsx demo.ts examples/boolean_ops.scad",
+    "dev:advanced": "tsx demo.ts examples/advanced.scad"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "manifold-3d": "^3.3.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
