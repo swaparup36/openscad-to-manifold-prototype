@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OpenSCAD to Manifold Viewer</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #222; font-family: sans-serif; color: white; }
+    #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; z-index: 10; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    #ui h2 { margin: 0 0 10px 0; font-size: 16px; }
+    input[type="text"] { width: 250px; padding: 6px; border: 1px solid #555; border-radius: 4px; background: #333; color: white; }
+    button { padding: 6px 12px; cursor: pointer; background: #007bff; border: none; color: white; border-radius: 4px; font-weight: bold; }
+    button:hover { background: #0056b3; }
+    #errorMsg { color: #ff6b6b; margin-top: 10px; font-size: 14px; max-width: 300px; display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "manifold-3d": "https://unpkg.com/manifold-3d@3.3.2/manifold.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="ui">
+    <h2>Manifold Viewer</h2>
+    <label for="filename">Compiled Manifold JS Object:</label><br>
+    <div style="margin-top: 5px;">
+      <!-- Change this file name at will -->
+      <input type="text" id="filename" value="out/cube.js" placeholder="out/cube.js">
+      <button id="loadBtn">Load</button>
+    </div>
+    <div id="errorMsg"></div>
+  </div>
+  
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x222222);
+    
+    // Keep reference to generated module and mesh
+    let currentMesh = null;
+    let currentModule = null; 
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+    camera.position.set(50, 50, 50);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    // Lighting
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    hemiLight.position.set(0, 200, 0);
+    scene.add(hemiLight);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(0, 100, 50);
+    scene.add(dirLight);
+
+    // Helpers
+    scene.add(new THREE.AxesHelper(20));
+    scene.add(new THREE.GridHelper(100, 100, 0x444444, 0x333333));
+
+    const errorMsgInfo = document.getElementById('errorMsg');
+
+    function showError(msg) {
+      errorMsgInfo.textContent = msg;
+      errorMsgInfo.style.display = 'block';
+    }
+
+    function hideError() {
+      errorMsgInfo.style.display = 'none';
+      errorMsgInfo.textContent = '';
+    }
+
+    async function loadMesh(filename) {
+      hideError();
+      const btn = document.getElementById('loadBtn');
+      const originalText = btn.textContent;
+      btn.textContent = 'Loading...';
+      btn.disabled = true;
+      const previousMesh = currentMesh;
+
+      try {
+        // Dynamic import with cache busting so changes auto-reflect
+        const module = await import(`./${filename}?t=${Date.now()}`);
+        
+        if (!module.result) {
+          throw new Error(`The file '${filename}' does not export 'result'. Please make sure you generated it after the recent compiler update.`);
+        }
+
+        const manifoldDef = module.result;
+        
+        // Ensure we retrieve the mesh representation
+        const manifoldMesh = manifoldDef.getMesh({});
+        if (!manifoldMesh || manifoldMesh.numVert === 0 || manifoldMesh.numTri === 0) {
+          throw new Error(`'${filename}' contains empty geometry (0 vertices / 0 triangles).`);
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        
+        const numProp = manifoldMesh.numProp;
+        const positions = new Float32Array(manifoldMesh.numVert * 3);
+        
+        // Extract xyz from interleaved properties array
+        for (let i = 0; i < manifoldMesh.numVert; i++) {
+          positions[i * 3 + 0] = manifoldMesh.vertProperties[i * numProp + 0];
+          positions[i * 3 + 1] = manifoldMesh.vertProperties[i * numProp + 1];
+          positions[i * 3 + 2] = manifoldMesh.vertProperties[i * numProp + 2];
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setIndex(new THREE.BufferAttribute(manifoldMesh.triVerts, 1));
+        geometry.computeVertexNormals();
+
+        // Material with beautiful wireframe combo or normal coloring
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x00d2ff,
+          roughness: 0.4,
+          metalness: 0.2,
+          side: THREE.DoubleSide
+        });
+        
+        const wireframeMaterial = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.1
+        });
+
+        currentMesh = new THREE.Group();
+        currentMesh.add(new THREE.Mesh(geometry, material));
+        currentMesh.add(new THREE.Mesh(geometry, wireframeMaterial));
+
+        scene.add(currentMesh);
+        if (previousMesh) {
+          scene.remove(previousMesh);
+          previousMesh.children.forEach(child => {
+            child.geometry.dispose();
+            if (Array.isArray(child.material)) {
+              child.material.forEach(m => m.dispose());
+            } else {
+              child.material.dispose();
+            }
+          });
+        }
+
+        // Center the camera on the object
+        geometry.computeBoundingBox();
+        if (!geometry.boundingBox) {
+          throw new Error(`'${filename}' did not produce a valid bounding box.`);
+        }
+        const center = new THREE.Vector3();
+        geometry.boundingBox.getCenter(center);
+        controls.target.copy(center);
+        
+        // Adjust camera position based on bounding sphere
+        geometry.computeBoundingSphere();
+        if (!geometry.boundingSphere) {
+          throw new Error(`'${filename}' did not produce a valid bounding sphere.`);
+        }
+        const radius = geometry.boundingSphere.radius;
+        camera.position.copy(center).add(new THREE.Vector3(radius * 1.5, radius * 1.5, radius * 1.5));
+
+      } catch (err) {
+        currentMesh = previousMesh;
+        console.error(err);
+        showError(err.message);
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
+    }
+
+    // Connect UI
+    document.getElementById('loadBtn').addEventListener('click', () => {
+      loadMesh(document.getElementById('filename').value);
+    });
+
+    document.getElementById('filename').addEventListener('keypress', (e) => {
+      if(e.key === 'Enter') {
+        loadMesh(document.getElementById('filename').value);
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }, false);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+    
+    // Fetch file right away at start
+    setTimeout(() => loadMesh(document.getElementById('filename').value), 500);
+
+  </script>
+</body>
+</html>

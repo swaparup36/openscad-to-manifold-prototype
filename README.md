@@ -84,10 +84,10 @@ examples/       Sample .scad files
 out/            Generated .js output
 ```
 
-### Future Work
-- `children()` support
-- `include` / `use`
-- `let` / `each` / `assert`
-- More 2D primitives (`text`, `offset`)
-- `minkowski()`
-- `projection()`
+### Status Notes
+- `children()` is supported.
+- `include` / `use` are resolved recursively before compile.
+- `let` / `each` / `assert` are supported in expression and module contexts.
+- `text()` and `offset()` are supported with pragmatic compiler/runtime approximations.
+- `minkowski()` is supported with a convex-hull approximation.
+- `projection()` is supported by projecting to 2D then emitting a thin 3D manifold for pipeline compatibility.

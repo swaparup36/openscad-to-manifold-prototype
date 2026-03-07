@@ -12,7 +12,14 @@ export type Expr =
   | FunctionCallExpr
   | IndexExpr
   | MemberExpr
-  | GroupExpr;
+  | GroupExpr
+  | EchoExpr
+  | LetExpr
+  | AssertExpr
+  | ListCompExpr
+  | EachExpr
+  | LambdaExpr
+  | DynCallExpr;
 
 export interface NumberLiteral   { kind: "number";     value: number; }
 export interface StringLiteral   { kind: "string";     value: string; }
@@ -28,6 +35,13 @@ export interface FunctionCallExpr{ kind: "call";       name: string; args: Argum
 export interface IndexExpr       { kind: "index";      object: Expr; index: Expr; }
 export interface MemberExpr      { kind: "member";     object: Expr; property: string; }
 export interface GroupExpr       { kind: "group";      expr: Expr; }
+export interface EchoExpr        { kind: "echo";       args: Argument[]; expr: Expr; }
+export interface LetExpr         { kind: "let";        assignments: LetAssignment[]; body: Expr; }
+export interface AssertExpr      { kind: "assert";     args: Argument[]; expr: Expr; }
+export interface ListCompExpr    { kind: "listComp";   generator: ListCompGenerator; }
+export interface EachExpr        { kind: "each";       expr: Expr; }
+export interface LambdaExpr      { kind: "lambda";     params: Parameter[]; body: Expr; }
+export interface DynCallExpr     { kind: "dynCall";    callee: Expr; args: Argument[]; }
 
 export interface Argument {
   name?: string;
@@ -42,7 +56,9 @@ export type Statement =
   | FunctionDeclStmt
   | ForStmt
   | IfStmt
-  | EmptyStmt;
+  | EmptyStmt
+  | UseStmt
+  | IncludeStmt;
 
 export interface ModuleCallStmt {
   kind: "moduleCall";
@@ -103,6 +119,34 @@ export interface ForVariable {
   name: string;
   range: Expr;
 }
+
+export interface UseStmt {
+  kind: "use";
+  path: string;
+}
+
+export interface IncludeStmt {
+  kind: "include";
+  path: string;
+}
+
+export interface LetAssignment {
+  name: string;
+  value: Expr;
+}
+
+export type ListCompGenerator =
+  | LCForGenerator
+  | LCCStyleForGenerator
+  | LCIfGenerator
+  | LCLetGenerator
+  | LCExprGenerator;
+
+export interface LCForGenerator  { kind: "lcFor";  variables: ForVariable[]; body: ListCompGenerator; }
+export interface LCCStyleForGenerator { kind: "lcCFor"; inits: LetAssignment[]; condition: Expr; updates: LetAssignment[]; body: ListCompGenerator; }
+export interface LCIfGenerator   { kind: "lcIf";   condition: Expr; ifTrue: ListCompGenerator; ifFalse?: ListCompGenerator; }
+export interface LCLetGenerator  { kind: "lcLet";  assignments: LetAssignment[]; body: ListCompGenerator; }
+export interface LCExprGenerator { kind: "lcExpr"; expr: Expr; }
 
 export interface Program {
   kind: "program";

@@ -1,22 +1,35 @@
 import fs from "fs";
-import { Lexer } from "./src/lexer.js";
-import { Parser } from "./src/parser.js";
 import { compile } from "./src/compiler.js";
+import { resolveProgram, getOpenSCADLibraryPaths } from "./src/resolver.js";
 
 import path from "path";
 
 const file = process.argv[2] || "examples/cube.scad";
-const code = fs.readFileSync(file, "utf8");
+const absFile = path.resolve(file);
 
-const lexer = new Lexer(code);
-const parser = new Parser(lexer);
-const ast = parser.parseProgram();
+// Library search paths: the workspace root (so BOSL2/ is found) and file's own directory
+const libraryPaths = [
+  path.dirname(absFile),
+  process.cwd(),
+  ...getOpenSCADLibraryPaths(),
+];
 
+// Resolve all include/use directives recursively
+const resolved = resolveProgram(absFile, libraryPaths);
+
+if (resolved.resolvedFiles.length > 1) {
+  console.log(`Resolved ${resolved.resolvedFiles.length} files:`);
+  for (const f of resolved.resolvedFiles) {
+    console.log(`  ${path.relative(process.cwd(), f)}`);
+  }
+}
+
+const ast = { kind: "program" as const, statements: resolved.statements };
 const js = compile(ast);
 console.log("Generated JavaScript:");
 console.log(js);
 
-const outputFile = path.join("out", file.slice(file.indexOf('/') + 1).replace(/\.scad$/, ".js"));
+const outputFile = path.join("out", path.basename(file, path.extname(file)) + ".js");
 fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, js);
 console.log(`Output written to ${outputFile}`);

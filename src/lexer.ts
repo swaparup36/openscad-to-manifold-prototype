@@ -40,6 +40,9 @@ export enum TokenType {
   Or,        // ||
   Bang,      // !
 
+  // Member access
+  Dot,       // .
+
   // Ternary
   Question,  // ?
 
@@ -49,10 +52,12 @@ export enum TokenType {
 export interface Token {
   type: TokenType;
   value?: string;
+  line?: number;
 }
 
 export class Lexer {
   private pos = 0;
+  private line = 1;
 
   constructor(private input: string) {}
 
@@ -65,7 +70,9 @@ export class Lexer {
   }
 
   private advance(): string {
-    return this.input[this.pos++] ?? "\0";
+    const ch = this.input[this.pos++] ?? "\0";
+    if (ch === "\n") this.line++;
+    return ch;
   }
 
   private isAtEnd(): boolean {
@@ -78,6 +85,7 @@ export class Lexer {
 
       // Whitespace
       if (/\s/.test(ch)) {
+        if (ch === "\n") this.line++;
         this.pos++;
         continue;
       }
@@ -109,77 +117,79 @@ export class Lexer {
   nextToken(): Token {
     this.skipWhitespaceAndComments();
 
-    if (this.isAtEnd()) return { type: TokenType.EOF };
+    if (this.isAtEnd()) return { type: TokenType.EOF, line: this.line };
 
+    const line = this.line;
     const ch = this.peek();
 
     // Number
     if (/\d/.test(ch) || (ch === "." && /\d/.test(this.peekNext()))) {
-      return this.readNumber();
+      return this.readNumber(line);
     }
 
     // String literal
     if (ch === '"') {
-      return this.readString();
+      return this.readString(line);
     }
 
     // Identifier / keyword
     if (/[a-zA-Z_$]/.test(ch)) {
-      return this.readIdentifier();
+      return this.readIdentifier(line);
     }
 
     // Operators and punctuation
     this.advance();
 
     switch (ch) {
-      case "(": return { type: TokenType.LParen };
-      case ")": return { type: TokenType.RParen };
-      case "[": return { type: TokenType.LBracket };
-      case "]": return { type: TokenType.RBracket };
-      case "{": return { type: TokenType.LBrace };
-      case "}": return { type: TokenType.RBrace };
-      case ",": return { type: TokenType.Comma };
-      case ";": return { type: TokenType.Semicolon };
-      case ":": return { type: TokenType.Colon };
-      case "#": return { type: TokenType.Hash };
-      case "?": return { type: TokenType.Question };
-      case "+": return { type: TokenType.Plus };
-      case "-": return { type: TokenType.Minus };
-      case "*": return { type: TokenType.Star };
-      case "%": return { type: TokenType.Percent };
-      case "^": return { type: TokenType.Caret };
+      case "(": return { type: TokenType.LParen, line };
+      case ")": return { type: TokenType.RParen, line };
+      case "[": return { type: TokenType.LBracket, line };
+      case "]": return { type: TokenType.RBracket, line };
+      case "{": return { type: TokenType.LBrace, line };
+      case "}": return { type: TokenType.RBrace, line };
+      case ",": return { type: TokenType.Comma, line };
+      case ";": return { type: TokenType.Semicolon, line };
+      case ":": return { type: TokenType.Colon, line };
+      case "#": return { type: TokenType.Hash, line };
+      case "?": return { type: TokenType.Question, line };
+      case ".": return { type: TokenType.Dot, line };
+      case "+": return { type: TokenType.Plus, line };
+      case "-": return { type: TokenType.Minus, line };
+      case "*": return { type: TokenType.Star, line };
+      case "%": return { type: TokenType.Percent, line };
+      case "^": return { type: TokenType.Caret, line };
 
-      case "/": return { type: TokenType.Slash };
+      case "/": return { type: TokenType.Slash, line };
 
       case "=":
-        if (this.peek() === "=") { this.advance(); return { type: TokenType.EqEq }; }
-        return { type: TokenType.Equals };
+        if (this.peek() === "=") { this.advance(); return { type: TokenType.EqEq, line }; }
+        return { type: TokenType.Equals, line };
 
       case "!":
-        if (this.peek() === "=") { this.advance(); return { type: TokenType.BangEq }; }
-        return { type: TokenType.Bang };
+        if (this.peek() === "=") { this.advance(); return { type: TokenType.BangEq, line }; }
+        return { type: TokenType.Bang, line };
 
       case "<":
-        if (this.peek() === "=") { this.advance(); return { type: TokenType.LtEq }; }
-        return { type: TokenType.Lt };
+        if (this.peek() === "=") { this.advance(); return { type: TokenType.LtEq, line }; }
+        return { type: TokenType.Lt, line };
 
       case ">":
-        if (this.peek() === "=") { this.advance(); return { type: TokenType.GtEq }; }
-        return { type: TokenType.Gt };
+        if (this.peek() === "=") { this.advance(); return { type: TokenType.GtEq, line }; }
+        return { type: TokenType.Gt, line };
 
       case "&":
-        if (this.peek() === "&") { this.advance(); return { type: TokenType.And }; }
-        throw new Error(`Unexpected character '&' (did you mean '&&'?)`);
+        if (this.peek() === "&") { this.advance(); return { type: TokenType.And, line }; }
+        throw new Error(`Unexpected character '&' (did you mean '&&'?) at line ${line}`);
 
       case "|":
-        if (this.peek() === "|") { this.advance(); return { type: TokenType.Or }; }
-        throw new Error(`Unexpected character '|' (did you mean '||'?)`);
+        if (this.peek() === "|") { this.advance(); return { type: TokenType.Or, line }; }
+        throw new Error(`Unexpected character '|' (did you mean '||'?) at line ${line}`);
     }
 
-    throw new Error(`Unexpected character '${ch}'`);
+    throw new Error(`Unexpected character '${ch}' at line ${line}`);
   }
 
-  private readNumber(): Token {
+  private readNumber(line: number): Token {
     const start = this.pos;
 
     // Integer part
@@ -200,10 +210,10 @@ export class Lexer {
       while (/\d/.test(this.peek())) this.advance();
     }
 
-    return { type: TokenType.Number, value: this.input.slice(start, this.pos) };
+    return { type: TokenType.Number, value: this.input.slice(start, this.pos), line };
   }
 
-  private readString(): Token {
+  private readString(line: number): Token {
     this.advance(); // consume opening "
     let result = "";
 
@@ -223,15 +233,15 @@ export class Lexer {
       }
     }
 
-    if (this.isAtEnd()) throw new Error("Unterminated string literal");
+    if (this.isAtEnd()) throw new Error(`Unterminated string literal at line ${line}`);
     this.advance();
 
-    return { type: TokenType.String, value: result };
+    return { type: TokenType.String, value: result, line };
   }
 
-  private readIdentifier(): Token {
+  private readIdentifier(line: number): Token {
     const start = this.pos;
     while (/[a-zA-Z_$0-9]/.test(this.peek())) this.advance();
-    return { type: TokenType.Identifier, value: this.input.slice(start, this.pos) };
+    return { type: TokenType.Identifier, value: this.input.slice(start, this.pos), line };
   }
 }
