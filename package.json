@@ -7,7 +7,8 @@
     "dev:cube": "tsx demo.ts examples/cube.scad",
     "dev:modules": "tsx demo.ts examples/modules.scad",
     "dev:boolean_ops": "tsx demo.ts examples/boolean_ops.scad",
-    "dev:advanced": "tsx demo.ts examples/advanced.scad"
+    "dev:advanced": "tsx demo.ts examples/advanced.scad",
+    "compile-all-examples": "tsx compile_all_examples.ts"
   },
   "keywords": [],
   "author": "",

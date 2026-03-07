@@ -1,93 +1,128 @@
-## OpenSCAD to ManifoldCAD Prototype Compiler
+# OpenSCAD to Manifold.js Prototype Compiler
 
-This is an early-stage experimental prototype for https://github.com/opencax/GSoC/issues/117.
+Early-stage experimental prototype for: https://github.com/opencax/GSoC/issues/117
 
-### Workflow
+## Current Status
 
-```
+This project can parse OpenSCAD source, resolve recursive `include`/`use` dependencies, and compile to JavaScript that executes with `manifold-3d`.
+
+Current pipeline:
+
+```text
 OpenSCAD (.scad) -> Lexer -> Parser -> AST -> Compiler -> Manifold JS (.js)
 ```
 
-The compiler reads `.scad` files, parses them into an AST using a hand-written **lexer** and **recursive descent parser**, then generates JavaScript that uses the Manifold 3D API.
+The generated files in `out/` export:
 
-### Supported OpenSCAD Constructs
+```js
+export const result = ...
+```
 
-#### 3D Primitives
-- `cube()` — scalar or vector size, `center`
-- `sphere()` — `r`, `d`, `$fn`
-- `cylinder()` — `h`, `r`, `r1`/`r2`, `d`, `d1`/`d2`, `center`, `$fn`
+## Supported Constructs
 
-#### 2D Primitives
-- `circle()` — `r`, `d`, `$fn`
-- `square()` — scalar or vector size, `center`
-- `polygon()` — `points`
+### Geometry / Modules
+- Primitives: `cube`, `sphere`, `cylinder`, `circle`, `square`, `polygon`, `polyhedron`, `text`
+- Transforms: `translate`, `rotate`, `scale`, `mirror`, `multmatrix`, `resize`
+- Boolean ops: `union`, `difference`, `intersection`, `hull`, `minkowski`
+- Extrusion: `linear_extrude`, `rotate_extrude`
+- Other modules: `projection`, `offset`, `color`, `render`, `children`, `echo`, `assert`, `let`
 
-#### Transforms
-- `translate()`, `rotate()`, `scale()` — vector argument
-- `mirror()` — mirror across a plane
-- `multmatrix()` — 4×4 transformation matrix
-- `color()` — passthrough (noted in output as comment)
+### Language
+- Variables, functions, modules
+- `for` statements and list-comprehension forms (`for`, C-style `for`, `if`, `let`, `each`)
+- `if/else`
+- Expressions: arithmetic, comparison, logical, ternary, unary, indexing, member access
+- Named arguments and default parameters
+- Vectors and ranges
+- Lambdas and dynamic calls (for example `expr(args)`)
+- Strings, booleans, `undef`, comments
+- `include <...>` and `use <...>` (resolved recursively before compile)
 
-#### Boolean Operations
-- `union()`, `difference()`, `intersection()`, `hull()`
+## Include / Use Resolution
 
-#### Extrusion
-- `linear_extrude()` — `height`, `twist`, `slices`, `center`
-- `rotate_extrude()` — `$fn`
+`demo.ts` resolves dependencies via `src/resolver.ts` using:
+- The current file's directory
+- Workspace root (so local libraries like `BOSL2/` can be found)
+- `OPENSCADPATH`
+- Default OpenSCAD user library locations per OS
 
-#### Language Features
-- **Variables** — `x = 10;`
-- **Modules** — `module foo(a, b=5) { ... }` with default parameters
-- **Functions** — `function f(x) = x * 2;`
-- **`for` loops** — `for (i = [0:10])`, `for (i = [1, 2, 3])`, multiple variables
-- **`if` / `else`**
-- **Expressions** — arithmetic (`+ - * / %`), comparison (`== != < > <= >=`), logical (`&& || !`), ternary (`? :`), unary negation
-- **Named arguments** — `cube(size=10, center=true)`
-- **Vectors & ranges** — `[1, 2, 3]`, `[0 : 0.5 : 10]`
-- **Comments** — `// line` and `/* block */`
-- **Strings** — `"hello\n"` with escape sequences
-- **Nested module calls** — user-defined modules called like built-ins
+`include` imports declarations and top-level geometry.
 
-### Quick Start
+`use` imports declarations only (modules/functions).
+
+## Running
+
+Install:
 
 ```bash
 npm install
 ```
 
-Compile an example:
+Set the `OPENSCADPATH` on the `.env` file. (This is the path on you PC where OpenSCAD libraries are stored)
+
+Compile built-in examples:
 
 ```bash
-npm run dev:cube          # examples/cube.scad
-npm run dev:advanced      # examples/advanced.scad
-npm run dev:boolean_ops   # examples/boolean_ops.scad
-npm run dev:modules       # examples/modules.scad
+npm run dev:cube
+npm run dev:advanced
+npm run dev:boolean_ops
+npm run dev:modules
 ```
 
-Or compile any `.scad` file:
+Compile all built-in examples at once:
+
+```bash
+npm run compile-all-examples
+```
+
+Compile any `.scad` file:
 
 ```bash
 npx tsx demo.ts path/to/file.scad
 ```
 
-Generated JS is written to `out/` and printed to the console.
+Generated JavaScript is written to `out/` and printed to stdout.
 
-### Project Structure
+## Visual Comparison Assets
 
+- BOSL2-oriented examples are available in `examples/`
+- Render comparison images are in `images/`
+- Comparison document: `comparison.md`
+- A local viewer page exists at `viewer.html` for loading compiled `out/*.js`
+
+## View any compiled example output
+
+```bash
+npm serve .
 ```
+
+- Open http://localhost:3000/viewer 
+- Enter the compiled output js file path (eg. out/xyz.js)
+- Click on the load button
+- You can see the mesh loaded on the 3D space
+
+## Known Approximations / Gaps
+
+- `text()` is approximated to a simple sized cross-section box.
+- `minkowski()` is approximated using convex hull of inputs.
+- `projection()` is emitted as a thin extruded manifold for 3D pipeline compatibility.
+- `color()` and `render()` are currently pass-through (kept as comments in output).
+- Compatibility with full OpenSCAD and full BOSL2 is not complete; behavior is pragmatic and still evolving.
+
+## Project Layout
+
+```text
 src/
-  lexer.ts      Tokenizer — numbers, strings, identifiers, operators, comments
-  ast.ts        AST node types (Expr + Statement)
-  parser.ts     Recursive descent parser → Program AST
-  compiler.ts   AST → Manifold JS code generator
-demo.ts         CLI entry point — reads .scad, writes .js
-examples/       Sample .scad files
-out/            Generated .js output
+  lexer.ts
+  parser.ts
+  ast.ts
+  compiler.ts
+  resolver.ts
+demo.ts
+complie_all_example.ts
+examples/
+images/
+out/
+viewer.html
+comparison.md
 ```
-
-### Status Notes
-- `children()` is supported.
-- `include` / `use` are resolved recursively before compile.
-- `let` / `each` / `assert` are supported in expression and module contexts.
-- `text()` and `offset()` are supported with pragmatic compiler/runtime approximations.
-- `minkowski()` is supported with a convex-hull approximation.
-- `projection()` is supported by projecting to 2D then emitting a thin 3D manifold for pipeline compatibility.
