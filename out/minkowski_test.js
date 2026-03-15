@@ -10,4 +10,7 @@ var $fn = 0, $fa = 12, $fs = 2;
 var $vpr = [0, 0, 0], $vpt = [0, 0, 0], $vpd = 500;
 var $parent_modules = 0;
 var _NO_ARG = Symbol("NO_ARG");
-export const result = ((__s) => Manifold.cube((is_list_fn(__s) ? __s : [__s, __s, __s]), false))(5).translate([1, 2, 3]);
+export const result = __minkowski2d3d([
+  ((__s) => Manifold.cube((is_list_fn(__s) ? __s : [__s, __s, __s]), true))([10, 10, 10]),
+  Manifold.sphere(2)
+]);

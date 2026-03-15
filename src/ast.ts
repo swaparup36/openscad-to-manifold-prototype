@@ -1,3 +1,9 @@
+import type { SourceRange } from "./lexer.js";
+
+export interface ASTNode {
+  loc?: SourceRange | undefined;
+}
+
 export type Expr =
   | NumberLiteral
   | StringLiteral
@@ -21,30 +27,30 @@ export type Expr =
   | LambdaExpr
   | DynCallExpr;
 
-export interface NumberLiteral   { kind: "number";     value: number; }
-export interface StringLiteral   { kind: "string";     value: string; }
-export interface BooleanLiteral  { kind: "boolean";    value: boolean; }
-export interface UndefLiteral    { kind: "undef"; }
-export interface IdentifierExpr  { kind: "identifier"; name: string; }
-export interface VectorExpr      { kind: "vector";     elements: Expr[]; }
-export interface RangeExpr       { kind: "range";      start: Expr; end: Expr; step?: Expr; }
-export interface BinaryExpr      { kind: "binary";     op: string; left: Expr; right: Expr; }
-export interface UnaryExpr       { kind: "unary";      op: string; operand: Expr; }
-export interface TernaryExpr     { kind: "ternary";    condition: Expr; ifTrue: Expr; ifFalse: Expr; }
-export interface FunctionCallExpr{ kind: "call";       name: string; args: Argument[]; }
-export interface IndexExpr       { kind: "index";      object: Expr; index: Expr; }
-export interface MemberExpr      { kind: "member";     object: Expr; property: string; }
-export interface GroupExpr       { kind: "group";      expr: Expr; }
-export interface EchoExpr        { kind: "echo";       args: Argument[]; expr: Expr; }
-export interface LetExpr         { kind: "let";        assignments: LetAssignment[]; body: Expr; }
-export interface AssertExpr      { kind: "assert";     args: Argument[]; expr: Expr; }
-export interface ListCompExpr    { kind: "listComp";   generator: ListCompGenerator; }
-export interface EachExpr        { kind: "each";       expr: Expr; }
-export interface LambdaExpr      { kind: "lambda";     params: Parameter[]; body: Expr; }
-export interface DynCallExpr     { kind: "dynCall";    callee: Expr; args: Argument[]; }
+export interface NumberLiteral   extends ASTNode { kind: "number";     value: number; }
+export interface StringLiteral   extends ASTNode { kind: "string";     value: string; }
+export interface BooleanLiteral  extends ASTNode { kind: "boolean";    value: boolean; }
+export interface UndefLiteral    extends ASTNode { kind: "undef"; }
+export interface IdentifierExpr  extends ASTNode { kind: "identifier"; name: string; }
+export interface VectorExpr      extends ASTNode { kind: "vector";     elements: Expr[]; }
+export interface RangeExpr       extends ASTNode { kind: "range";      start: Expr; end: Expr; step?: Expr | undefined; }
+export interface BinaryExpr      extends ASTNode { kind: "binary";     op: string; left: Expr; right: Expr; }
+export interface UnaryExpr       extends ASTNode { kind: "unary";      op: string; operand: Expr; }
+export interface TernaryExpr     extends ASTNode { kind: "ternary";    condition: Expr; ifTrue: Expr; ifFalse: Expr; }
+export interface FunctionCallExpr extends ASTNode{ kind: "call";       name: string; args: Argument[]; }
+export interface IndexExpr       extends ASTNode { kind: "index";      object: Expr; index: Expr; }
+export interface MemberExpr      extends ASTNode { kind: "member";     object: Expr; property: string; }
+export interface GroupExpr       extends ASTNode { kind: "group";      expr: Expr; }
+export interface EchoExpr        extends ASTNode { kind: "echo";       args: Argument[]; expr: Expr; }
+export interface LetExpr         extends ASTNode { kind: "let";        assignments: LetAssignment[]; body: Expr; }
+export interface AssertExpr      extends ASTNode { kind: "assert";     args: Argument[]; expr: Expr; }
+export interface ListCompExpr    extends ASTNode { kind: "listComp";   generator: ListCompGenerator; }
+export interface EachExpr        extends ASTNode { kind: "each";       expr: Expr; }
+export interface LambdaExpr      extends ASTNode { kind: "lambda";     params: Parameter[]; body: Expr; }
+export interface DynCallExpr     extends ASTNode { kind: "dynCall";    callee: Expr; args: Argument[]; }
 
-export interface Argument {
-  name?: string;
+export interface Argument extends ASTNode {
+  name?: string | undefined;
   value: Expr;
 }
 
@@ -60,77 +66,77 @@ export type Statement =
   | UseStmt
   | IncludeStmt;
 
-export interface ModuleCallStmt {
+export interface ModuleCallStmt extends ASTNode {
   kind: "moduleCall";
   name: string;
   args: Argument[];
-  child?: Statement;
-  modifier?: string;   // *, !, #, %
+  child?: Statement | undefined;
+  modifier?: string | undefined;   // *, !, #, %
 }
 
-export interface BlockStmt {
+export interface BlockStmt extends ASTNode {
   kind: "block";
   statements: Statement[];
 }
 
-export interface VariableDeclStmt {
+export interface VariableDeclStmt extends ASTNode {
   kind: "variableDecl";
   name: string;
   value: Expr;
 }
 
-export interface ModuleDeclStmt {
+export interface ModuleDeclStmt extends ASTNode {
   kind: "moduleDecl";
   name: string;
   params: Parameter[];
   body: Statement;
 }
 
-export interface FunctionDeclStmt {
+export interface FunctionDeclStmt extends ASTNode {
   kind: "functionDecl";
   name: string;
   params: Parameter[];
   body: Expr;
 }
 
-export interface ForStmt {
+export interface ForStmt extends ASTNode {
   kind: "for";
   variables: ForVariable[];
   body: Statement;
 }
 
-export interface IfStmt {
+export interface IfStmt extends ASTNode {
   kind: "if";
   condition: Expr;
   thenBody: Statement;
-  elseBody?: Statement;
+  elseBody?: Statement | undefined;
 }
 
-export interface EmptyStmt {
+export interface EmptyStmt extends ASTNode {
   kind: "empty";
 }
 
-export interface Parameter {
+export interface Parameter extends ASTNode {
   name: string;
-  defaultValue?: Expr;
+  defaultValue?: Expr | undefined;
 }
 
-export interface ForVariable {
+export interface ForVariable extends ASTNode {
   name: string;
   range: Expr;
 }
 
-export interface UseStmt {
+export interface UseStmt extends ASTNode {
   kind: "use";
   path: string;
 }
 
-export interface IncludeStmt {
+export interface IncludeStmt extends ASTNode {
   kind: "include";
   path: string;
 }
 
-export interface LetAssignment {
+export interface LetAssignment extends ASTNode {
   name: string;
   value: Expr;
 }
@@ -142,13 +148,13 @@ export type ListCompGenerator =
   | LCLetGenerator
   | LCExprGenerator;
 
-export interface LCForGenerator  { kind: "lcFor";  variables: ForVariable[]; body: ListCompGenerator; }
-export interface LCCStyleForGenerator { kind: "lcCFor"; inits: LetAssignment[]; condition: Expr; updates: LetAssignment[]; body: ListCompGenerator; }
-export interface LCIfGenerator   { kind: "lcIf";   condition: Expr; ifTrue: ListCompGenerator; ifFalse?: ListCompGenerator; }
-export interface LCLetGenerator  { kind: "lcLet";  assignments: LetAssignment[]; body: ListCompGenerator; }
-export interface LCExprGenerator { kind: "lcExpr"; expr: Expr; }
+export interface LCForGenerator  extends ASTNode { kind: "lcFor";  variables: ForVariable[]; body: ListCompGenerator; }
+export interface LCCStyleForGenerator extends ASTNode { kind: "lcCFor"; inits: LetAssignment[]; condition: Expr; updates: LetAssignment[]; body: ListCompGenerator; }
+export interface LCIfGenerator   extends ASTNode { kind: "lcIf";   condition: Expr; ifTrue: ListCompGenerator; ifFalse?: ListCompGenerator | undefined; }
+export interface LCLetGenerator  extends ASTNode { kind: "lcLet";  assignments: LetAssignment[]; body: ListCompGenerator; }
+export interface LCExprGenerator extends ASTNode { kind: "lcExpr"; expr: Expr; }
 
-export interface Program {
+export interface Program extends ASTNode {
   kind: "program";
   statements: Statement[];
 }

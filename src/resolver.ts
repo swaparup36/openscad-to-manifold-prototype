@@ -5,13 +5,7 @@ import { Lexer } from "./lexer.js";
 import { Parser } from "./parser.js";
 import type { Program, Statement } from "./ast.js";
 
-/**
- * Resolves and recursively parses OpenSCAD include/use directives.
- *
- * OpenSCAD semantics:
- *   include <file> — imports variables, modules, functions AND top-level geometry
- *   use <file>     — imports only module and function declarations (no variables, no geometry)
- */
+// Resolves and recursively parses OpenSCAD include/use directives
 export interface ResolvedProgram {
   // All statements from included files + the main file, in order
   statements: Statement[];
@@ -49,8 +43,9 @@ export function resolveProgram(
 ): ResolvedProgram {
   const resolvedFiles: string[] = [];
   const visited = new Set<string>();
+  const entryAbsPath = path.resolve(entryFile);
 
-  const statements = resolveFile(entryFile, "include", visited, resolvedFiles, libraryPaths);
+  const statements = resolveFile(entryAbsPath, "include", visited, resolvedFiles, libraryPaths, entryAbsPath);
 
   return { statements, resolvedFiles };
 }
@@ -61,6 +56,7 @@ function resolveFile(
   visited: Set<string>,
   resolvedFiles: string[],
   libraryPaths: string[],
+  entryAbsPath: string,
 ): Statement[] {
   const absPath = path.resolve(filePath);
 
@@ -83,7 +79,11 @@ function resolveFile(
   try {
     program = parser.parseProgram();
   } catch (err) {
-    console.warn(`Warning: failed to parse ${filePath}: ${(err as Error).message}`);
+    const msg = `failed to parse ${absPath}: ${(err as Error).message}`;
+    if (absPath === entryAbsPath) {
+      throw new Error(msg);
+    }
+    console.warn(`Warning: ${msg}`);
     return [];
   }
 
@@ -94,7 +94,7 @@ function resolveFile(
     if (stmt.kind === "include" || stmt.kind === "use") {
       const resolvedPath = resolveIncludePath(stmt.path, fileDir, libraryPaths);
       if (resolvedPath) {
-        const imported = resolveFile(resolvedPath, stmt.kind, visited, resolvedFiles, libraryPaths);
+        const imported = resolveFile(resolvedPath, stmt.kind, visited, resolvedFiles, libraryPaths, entryAbsPath);
         result.push(...imported);
       } else {
         console.warn(`Warning: could not resolve ${stmt.kind} <${stmt.path}> from ${filePath}`);
@@ -116,11 +116,7 @@ function resolveFile(
   return result;
 }
 
-/**
- * Resolve an include/use path against:
- *   1. The directory of the current file
- *   2. Each library search path
- */
+// Resolve an include/use path against (The directory of the current file, Each library search path)
 function resolveIncludePath(
   includePath: string,
   currentDir: string,

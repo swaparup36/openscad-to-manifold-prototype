@@ -11,6 +11,12 @@
     button { padding: 6px 12px; cursor: pointer; background: #007bff; border: none; color: white; border-radius: 4px; font-weight: bold; }
     button:hover { background: #0056b3; }
     #errorMsg { color: #ff6b6b; margin-top: 10px; font-size: 14px; max-width: 300px; display: none; }
+    #axisIndicator { position: absolute; bottom: 10px; left: 10px; width: 100px; height: 100px; border: 2px solid rgba(255,255,255,0.3); border-radius: 8px; background: rgba(0,0,0,0.5); z-index: 5; }
+    #axisIndicator canvas { display: block; }
+    .axisLabel { position: absolute; font-weight: bold; font-size: 12px; pointer-events: none; }
+    #axisLabelX { color: #ff0000; bottom: 35px; left: 75px; }
+    #axisLabelY { color: #00ff00; bottom: 75px; left: 45px; }
+    #axisLabelZ { color: #0088ff; bottom: 45px; left: 25px; }
   </style>
   <script type="importmap">
     {
@@ -34,6 +40,12 @@
     <div id="errorMsg"></div>
   </div>
   
+  <div id="axisIndicator">
+    <div id="axisLabelX" class="axisLabel">X</div>
+    <div id="axisLabelY" class="axisLabel">Y</div>
+    <div id="axisLabelZ" class="axisLabel">Z</div>
+  </div>
+  
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -47,12 +59,32 @@
     let currentModule = null; 
 
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+    camera.up.set(0, 0, 1);
     camera.position.set(50, 50, 50);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     document.body.appendChild(renderer.domElement);
+
+    // Axis indicator setup
+    const axisIndicatorElement = document.getElementById('axisIndicator');
+    const axisRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    axisRenderer.setSize(100, 100);
+    axisRenderer.setPixelRatio(window.devicePixelRatio);
+    axisRenderer.setClearColor(0x000000, 0);
+    axisRenderer.domElement.style.display = 'block';
+    axisRenderer.domElement.style.width = '100px';
+    axisRenderer.domElement.style.height = '100px';
+    axisIndicatorElement.appendChild(axisRenderer.domElement);
+
+    const axisScene = new THREE.Scene();
+    const axisCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    axisCamera.up.set(0, 0, 1);
+    axisCamera.position.set(0, 0, 2);
+
+    const axisHelper = new THREE.AxesHelper(1);
+    axisScene.add(axisHelper);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -69,7 +101,10 @@
 
     // Helpers
     scene.add(new THREE.AxesHelper(20));
-    scene.add(new THREE.GridHelper(100, 100, 0x444444, 0x333333));
+    const gridHelper = new THREE.GridHelper(100, 100, 0x444444, 0x333333);
+    // OpenSCAD is Z-up, so place the ground grid on the XY plane (z = 0).
+    gridHelper.rotation.x = Math.PI / 2;
+    scene.add(gridHelper);
 
     const errorMsgInfo = document.getElementById('errorMsg');
 
@@ -99,8 +134,11 @@
           throw new Error(`The file '${filename}' does not export 'result'. Please make sure you generated it after the recent compiler update.`);
         }
 
-        const manifoldDef = module.result;
-        
+        let manifoldDef = module.result;
+        // CrossSection (2D) has extrude but not getMesh; extrude for display
+        if (manifoldDef && typeof manifoldDef.extrude === 'function' && typeof manifoldDef.getMesh !== 'function') {
+          manifoldDef = manifoldDef.extrude(0.1);
+        }
         // Ensure we retrieve the mesh representation
         const manifoldMesh = manifoldDef.getMesh({});
         if (!manifoldMesh || manifoldMesh.numVert === 0 || manifoldMesh.numTri === 0) {
@@ -119,13 +157,63 @@
           positions[i * 3 + 2] = manifoldMesh.vertProperties[i * numProp + 2];
         }
 
+        // Custom color layout is appended as [r,g,b,a,marker] at the end.
+        let hasVertexColor = numProp >= 5;
+        let averageAlpha = 1;
+        if (hasVertexColor) {
+          const colorOffset = numProp - 5;
+          const markerOffset = numProp - 1;
+          const colors = new Float32Array(manifoldMesh.numVert * 3);
+          let alphaSum = 0;
+          let markedColorCount = 0;
+          const fallbackColor = new THREE.Color(0x00d2ff);
+
+          const clamp01 = (v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return 0;
+            if (n <= 0) return 0;
+            if (n >= 1) return 1;
+            return n;
+          };
+
+          for (let i = 0; i < manifoldMesh.numVert; i++) {
+            const offset = i * numProp;
+            const marker = Number(manifoldMesh.vertProperties[offset + markerOffset]);
+            const hasMarkedColor = Number.isFinite(marker) && marker > 0.5;
+            const rawR = Number(manifoldMesh.vertProperties[offset + colorOffset]);
+            const rawG = Number(manifoldMesh.vertProperties[offset + colorOffset + 1]);
+            const rawB = Number(manifoldMesh.vertProperties[offset + colorOffset + 2]);
+            const hasFiniteRGB = Number.isFinite(rawR) && Number.isFinite(rawG) && Number.isFinite(rawB);
+            const useCustomColor = hasMarkedColor && hasFiniteRGB;
+            const r = useCustomColor ? clamp01(rawR) : fallbackColor.r;
+            const g = useCustomColor ? clamp01(rawG) : fallbackColor.g;
+            const b = useCustomColor ? clamp01(rawB) : fallbackColor.b;
+            if (useCustomColor) markedColorCount++;
+            colors[i * 3 + 0] = r;
+            colors[i * 3 + 1] = g;
+            colors[i * 3 + 2] = b;
+            const rawA = Number(manifoldMesh.vertProperties[offset + colorOffset + 3]);
+            alphaSum += useCustomColor && Number.isFinite(rawA) ? clamp01(rawA) : 1;
+          }
+
+          if (markedColorCount > 0) {
+            averageAlpha = manifoldMesh.numVert > 0 ? alphaSum / manifoldMesh.numVert : 1;
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+          } else {
+            hasVertexColor = false;
+          }
+        }
+
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(manifoldMesh.triVerts, 1));
         geometry.computeVertexNormals();
 
         // Material with beautiful wireframe combo or normal coloring
         const material = new THREE.MeshStandardMaterial({
-          color: 0x00d2ff,
+          color: hasVertexColor ? 0xffffff : 0x00d2ff,
+          vertexColors: hasVertexColor,
+          opacity: hasVertexColor ? averageAlpha : 1,
+          transparent: hasVertexColor && averageAlpha < 0.999,
           roughness: 0.4,
           metalness: 0.2,
           side: THREE.DoubleSide
@@ -197,12 +285,21 @@
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      axisRenderer.setSize(100, 100);
     }, false);
 
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
+      
+      // Sync axis indicator with main camera rotation
+      axisCamera.position.copy(camera.position);
+      axisCamera.position.sub(controls.target);
+      axisCamera.position.setLength(2);
+      axisCamera.lookAt(axisScene.position);
+      
       renderer.render(scene, camera);
+      axisRenderer.render(axisScene, axisCamera);
     }
     animate();
     

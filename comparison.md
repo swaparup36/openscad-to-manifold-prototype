@@ -37,3 +37,27 @@ Each example demonstrates whether the compiled Manifold.js geometry matches the 
 | ![](images/bosl2_multiple_attachments_openscad.png) | ![](images/bosl2_multiple_attachments_manifold.png) |
 
 ---
+
+## Example 5 – table.scad
+
+| OpenSCAD Output                   | Compiled Manifold.js Output       |
+| --------------------------------- | --------------------------------- |
+| ![](images/table_openscad.png) | ![](images/table_manifold.png) |
+
+---
+
+## Example 6 – tree.scad
+
+| OpenSCAD Output                   | Compiled Manifold.js Output       |
+| --------------------------------- | --------------------------------- |
+| ![](images/tree_openscad.png) | ![](images/tree_manifold.png) |
+
+---
+
+## Example 6 – minkowski_test.scad
+
+| OpenSCAD Output                   | Compiled Manifold.js Output       |
+| --------------------------------- | --------------------------------- |
+| ![](images/minkowski_test_openscad.png) | ![](images/minkowski_test_manifold.png) |
+
+---

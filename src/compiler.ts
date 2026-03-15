@@ -1,8 +1,25 @@
 import type {
   Program, Statement, Expr, Argument,
   ModuleCallStmt, BlockStmt, ForStmt, IfStmt,
-  ForVariable, ListCompGenerator,
+  ForVariable, ListCompGenerator, ASTNode,
 } from "./ast.js";
+import type {
+  IRNode,
+  IRPrimitiveNode,
+  IRTransformNode,
+  IRBooleanNode,
+  IRModuleCallNode,
+  IRChildrenNode,
+  IRSequenceNode,
+  IRIfNode,
+  IRForNode,
+} from "./ir.js";
+
+function locTag(node: ASTNode): string {
+  if (!node.loc) return "";
+  const s = node.loc.start;
+  return ` @${s.line}:${s.column}`;
+}
 
 // JavaScript reserved words
 const JS_RESERVED = new Set([
@@ -22,281 +39,22 @@ function escapeName(name: string): string {
   return name;
 }
 
-// OpenSCAD runtime (inlined into compiled output)
-function getRuntime(): string {
-  return `// OpenSCAD Runtime
-// Type checks (OpenSCAD built-ins)
-function is_undef_fn(x) { return x === undefined || x === null; }
-function is_bool_fn(x) { return typeof x === "boolean"; }
-function is_num_fn(x) { return typeof x === "number" && !Number.isNaN(x); }
-function is_string_fn(x) { return typeof x === "string"; }
-function is_list_fn(x) { return Array.isArray(x); }
-function is_function_fn(x) { return typeof x === "function"; }
-// is_finite, is_nan, is_int: provided by BOSL2 utility.scad; OpenSCAD builtins compiled from source.
-
-// Trig (OpenSCAD uses degrees!)
-function sin_fn(x) { return Math.sin(x * Math.PI / 180); }
-function cos_fn(x) { return Math.cos(x * Math.PI / 180); }
-function tan_fn(x) { return Math.tan(x * Math.PI / 180); }
-function asin_fn(x) { return Math.asin(x) * 180 / Math.PI; }
-function acos_fn(x) { return Math.acos(x) * 180 / Math.PI; }
-function atan_fn(x) { return Math.atan(x) * 180 / Math.PI; }
-function atan2_fn(y, x) { return Math.atan2(y, x) * 180 / Math.PI; }
-
-// Math (OpenSCAD built-ins)
-var abs_fn = Math.abs;
-var sign_fn = Math.sign;
-var floor_fn = Math.floor;
-var ceil_fn = Math.ceil;
-var round_fn = Math.round;
-var sqrt_fn = Math.sqrt;
-var exp_fn = Math.exp;
-function ln_fn(x) { return Math.log(x); }
-function log_fn(x) { return Math.log(x); }
-function min_fn(...a) { return a.length === 1 && Array.isArray(a[0]) ? Math.min(...a[0]) : Math.min(...a); }
-function max_fn(...a) { return a.length === 1 && Array.isArray(a[0]) ? Math.max(...a[0]) : Math.max(...a); }
-function norm_fn(v) { return Math.sqrt(v.reduce((s, x) => s + x * x, 0)); }
-function cross_fn(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
-
-// String & list (OpenSCAD built-ins)
-function len_fn(x) { return x == null ? undefined : x.length; }
-function str_fn(...a) { return a.map(x => x === undefined ? "undef" : String(x)).join(""); }
-function chr_fn(n) { return Array.isArray(n) ? n.map(c => String.fromCharCode(c)).join("") : String.fromCharCode(n); }
-function ord_fn(s) { return s == null || s.length === 0 ? undefined : s.charCodeAt(0); }
-function concat_fn(...a) { return [].concat(...a); }
-function search_fn(needle, haystack, num_returns, idx_col) {
-  if (is_string_fn(needle) && is_string_fn(haystack)) {
-    var result = [];
-    for (var ch of needle) {
-      var indices = [];
-      for (var i = 0; i < haystack.length; i++) { if (haystack[i] === ch) indices.push(i); }
-      result.push(num_returns === 0 ? indices : indices.slice(0, num_returns || 1));
-    }
-    return num_returns === 1 || num_returns === undefined ? result.map(r => r.length > 0 ? r[0] : []) : result;
-  }
-  if (is_list_fn(haystack) && is_list_fn(needle)) {
-    return needle.map(function(n) {
-      var indices = [];
-      for (var i = 0; i < haystack.length; i++) {
-        var item = idx_col !== undefined ? haystack[i][idx_col] : haystack[i];
-        if (__eq(item, n)) indices.push(i);
-      }
-      return num_returns === 0 ? indices : (indices.length > 0 ? indices[0] : []);
-    });
-  }
-  return [];
-}
-function lookup_fn(key, table) {
-  if (key <= table[0][0]) return table[0][1];
-  if (key >= table[table.length-1][0]) return table[table.length-1][1];
-  for (var i = 0; i < table.length - 1; i++) {
-    if (table[i][0] <= key && key <= table[i+1][0]) {
-      var t = (key - table[i][0]) / (table[i+1][0] - table[i][0]);
-      return table[i][1] + t * (table[i+1][1] - table[i][1]);
-    }
-  }
-  return undefined;
-}
-
-// Control
-function openscad_assert_fn(cond, msg) { if (!cond) { console.trace("Assertion failed:", msg); throw new Error(msg || "Assertion failed"); } }
-function __eq(a, b) {
-  if (a === b) return true;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    for (var i = 0; i < a.length; i++) { if (!__eq(a[i], b[i])) return false; }
-    return true;
-  }
-  return false;
-}
-function __add(a, b) {
-  if (Array.isArray(a)) {
-    if (Array.isArray(b)) return a.map((x, i) => __add(x, b[i]));
-    return a.map(x => __add(x, b));
-  }
-  if (Array.isArray(b)) return b.map(x => __add(a, x));
-  return a + b;
-}
-function __sub(a, b) {
-  if (Array.isArray(a)) {
-    if (Array.isArray(b)) return a.map((x, i) => __sub(x, b[i]));
-    return a.map(x => __sub(x, b));
-  }
-  if (Array.isArray(b)) return b.map(x => __sub(a, x));
-  return a - b;
-}
-function __mul(a, b) {
-  if (Array.isArray(a)) {
-    if (Array.isArray(b)) {
-      if (a.length > 0 && Array.isArray(a[0])) {
-        if (b.length > 0 && Array.isArray(b[0])) {
-          var res = [];
-          for (var i = 0; i < a.length; i++) {
-            res[i] = [];
-            for (var j = 0; j < b[0].length; j++) {
-              var sum = 0;
-              for (var k = 0; k < a[0].length; k++) sum += a[i][k] * b[k][j];
-              res[i].push(sum);
-            }
-          }
-          return res;
-        } else {
-          return a.map(row => __mul(row, b));
-        }
-      } else {
-        if (b.length > 0 && Array.isArray(b[0])) {
-          var res2 = [];
-          for (var j2 = 0; j2 < b[0].length; j2++) {
-            var sum2 = 0;
-            for (var k2 = 0; k2 < a.length; k2++) sum2 += a[k2] * b[k2][j2];
-            res2.push(sum2);
-          }
-          return res2;
-        } else {
-          var sum3 = 0;
-          for (var i3 = 0; i3 < Math.min(a.length, b.length); i3++) sum3 += a[i3] * b[i3];
-          return sum3;
-        }
-      }
-    }
-    return a.map(x => __mul(x, b));
-  }
-  if (Array.isArray(b)) return b.map(x => __mul(a, x));
-  return a * b;
-}
-function __div(a, b) {
-  if (Array.isArray(a)) {
-    if (Array.isArray(b)) return a.map((x, i) => __div(x, b[i]));
-    return a.map(x => __div(x, b));
-  }
-  if (Array.isArray(b)) return b.map(x => __div(a, x));
-  return a / b;
-}
-function __mod(a, b) {
-  if (Array.isArray(a)) {
-    if (Array.isArray(b)) return a.map((x, i) => __mod(x, b[i]));
-    return a.map(x => __mod(x, b));
-  }
-  if (Array.isArray(b)) return b.map(x => __mod(a, x));
-  return a % b;
-}
-function __neg(a) {
-  if (Array.isArray(a)) return a.map(__neg);
-  return -a;
-}
-function __pos(a) {
-  if (Array.isArray(a)) return a.map(__pos);
-  return +a;
-}
-
-// OpenSCAD version
-function version_fn() { return [2019, 5, 0]; }
-function version_num_fn() { return 20190500; }
-
-// Constants
-var PI = Math.PI;
-var INF = Infinity;
-var NAN = NaN;
-var undef = undefined;
-var _EPSILON = 1e-9;
-
-// Children stack for module calls
-var __children_stack = [];
-function __with_children(fn, count, call) {
-  __children_stack.push({ fn: fn, count: count });
-  try {
-    return call();
-  } finally {
-    __children_stack.pop();
-  }
-}
-
-function __is_finite_matrix4(m) {
-  return Array.isArray(m) &&
-    m.length === 4 &&
-    m.every((row) => Array.isArray(row) &&
-      row.length === 4 &&
-      row.every((v) => typeof v === "number" && Number.isFinite(v)));
-}
-
-// Manifold expects a flat 4x4 matrix in column-major order.
-function __to_manifold_mat4(m) {
-  if (Array.isArray(m) && m.length === 16 && m.every((v) => typeof v === "number" && Number.isFinite(v))) {
-    return m;
-  }
-  if (!__is_finite_matrix4(m)) return undefined;
-  const out = new Array(16);
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 4; col++) {
-      out[col * 4 + row] = m[row][col];
-    }
-  }
-  return out;
-}
-
-// Guard transform() against invalid matrices produced by complex attachment math.
-function __safe_transform(shape, m) {
-  const mm = __to_manifold_mat4(m);
-  if (!mm) return shape;
-  try {
-    return shape.transform(mm);
-  } catch {
-    return shape;
-  }
-}
-
-function __identity4() {
-  return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
-}
-
-// BOSL2 attachment math can occasionally emit invalid transforms or throw.
-function __safe_attach_transform(...args) {
-  try {
-    const m = _attach_transform_fn(...args);
-    return __is_finite_matrix4(m) ? m : __identity4();
-  } catch {
-    return __identity4();
-  }
-}
-
-// 2D helpers used by offset()/projection() fallbacks.
-function __safe_offset2d(shape, delta, joinType = "Round", miterLimit = 2, circularSegments = 0) {
-  try {
-    if (shape && typeof shape.offset === "function") {
-      return shape.offset(delta, joinType, miterLimit, circularSegments);
-    }
-  } catch {}
-  return shape;
-}
-
-function __safe_project3d(shape) {
-  try {
-    if (shape && typeof shape.project === "function") return shape.project();
-  } catch {}
-  return CrossSection.square(0);
-}
-
-// OpenSCAD iteration can target lists, strings, and occasionally scalars.
-function __flat_map_iter(v, fn) {
-  if (v === undefined || v === null) return [];
-  if (Array.isArray(v)) return v.flatMap(fn);
-  if (typeof v === "string") return Array.from(v).flatMap(fn);
-  return [v].flatMap(fn);
-}
-
-// Range expansion: convert OpenSCAD range [start:step:end] to an actual array
-function __range(start, step, end) {
-  var result = [];
-  if (step > 0) { for (var i = start; i <= end; i += step) result.push(i); }
-  else if (step < 0) { for (var i = start; i >= end; i += step) result.push(i); }
-  return result;
-}
-// ── End Runtime ─────────────────────────────────────────────────────`;
-}
-
 // Signatures
 interface Signature { params: string[]; }
 const signatures = new Map<string, Signature>();
+
+type ModuleDeclStmtType = Extract<Statement, { kind: "moduleDecl" }>;
+
+interface IRLowerContext {
+  modules: Map<string, ModuleDeclStmtType>;
+  children: IRNode[];
+  callStack: string[];
+}
+
+let moduleDeclRegistry = new Map<string, ModuleDeclStmtType>();
+
+const MAX_IR_INLINE_DEPTH = 2;
+const MAX_IR_INLINE_COMPLEXITY = 120;
 
 const BUILTIN_SIGNATURES: Record<string, string[]> = {
   "cube$mod": ["size", "center"],
@@ -339,6 +97,225 @@ function collectSignatures(stmts: Statement[]) {
   }
 }
 
+function collectModuleDeclarations(
+  stmts: Statement[],
+  into: Map<string, ModuleDeclStmtType> = new Map<string, ModuleDeclStmtType>(),
+): Map<string, ModuleDeclStmtType> {
+  for (const stmt of stmts) {
+    if (stmt.kind === "moduleDecl") {
+      into.set(stmt.name, stmt);
+      if (stmt.body.kind === "block") {
+        collectModuleDeclarations(stmt.body.statements, into);
+      }
+      continue;
+    }
+    if (stmt.kind === "block") {
+      collectModuleDeclarations(stmt.statements, into);
+      continue;
+    }
+    if (stmt.kind === "if") {
+      if (stmt.thenBody.kind === "block") collectModuleDeclarations(stmt.thenBody.statements, into);
+      if (stmt.elseBody && stmt.elseBody.kind === "block") collectModuleDeclarations(stmt.elseBody.statements, into);
+    }
+  }
+  return into;
+}
+
+function baseIRContext(modules = moduleDeclRegistry): IRLowerContext {
+  return { modules, children: [], callStack: [] };
+}
+
+function estimateExprComplexity(expr: Expr): number {
+  switch (expr.kind) {
+    case "number":
+    case "string":
+    case "boolean":
+    case "undef":
+    case "identifier":
+      return 1;
+    case "vector":
+      return 1 + expr.elements.reduce((sum, item) => sum + estimateExprComplexity(item), 0);
+    case "range":
+      return 1 + estimateExprComplexity(expr.start) + estimateExprComplexity(expr.end) + (expr.step ? estimateExprComplexity(expr.step) : 0);
+    case "binary":
+      return 1 + estimateExprComplexity(expr.left) + estimateExprComplexity(expr.right);
+    case "unary":
+      return 1 + estimateExprComplexity(expr.operand);
+    case "group":
+      return 1 + estimateExprComplexity(expr.expr);
+    case "each":
+      return 1 + estimateExprComplexity(expr.expr);
+    case "ternary":
+      return 1 + estimateExprComplexity(expr.condition) + estimateExprComplexity(expr.ifTrue) + estimateExprComplexity(expr.ifFalse);
+    case "call":
+      return 1 + expr.args.reduce((sum, arg) => sum + estimateExprComplexity(arg.value), 0);
+    case "echo":
+      return 1 + expr.args.reduce((sum, arg) => sum + estimateExprComplexity(arg.value), 0) + estimateExprComplexity(expr.expr);
+    case "assert":
+      return 1 + expr.args.reduce((sum, arg) => sum + estimateExprComplexity(arg.value), 0) + estimateExprComplexity(expr.expr);
+    case "index":
+      return 1 + estimateExprComplexity(expr.object) + estimateExprComplexity(expr.index);
+    case "member":
+      return 1 + estimateExprComplexity(expr.object);
+    case "let":
+      return 1 + expr.assignments.reduce((sum, item) => sum + estimateExprComplexity(item.value), 0) + estimateExprComplexity(expr.body);
+    case "listComp":
+      return 1 + estimateListCompComplexity(expr.generator);
+    case "lambda":
+      return 1 + expr.params.reduce((sum, item) => sum + (item.defaultValue ? estimateExprComplexity(item.defaultValue) : 0), 0) + estimateExprComplexity(expr.body);
+    case "dynCall":
+      return 1 + estimateExprComplexity(expr.callee) + expr.args.reduce((sum, arg) => sum + estimateExprComplexity(arg.value), 0);
+    default:
+      return 1;
+  }
+}
+
+function estimateListCompComplexity(generator: ListCompGenerator): number {
+  switch (generator.kind) {
+    case "lcFor":
+      return 1 + generator.variables.reduce((sum, item) => sum + estimateExprComplexity(item.range), 0) + estimateListCompComplexity(generator.body);
+    case "lcCFor":
+      return 1
+        + generator.inits.reduce((sum, item) => sum + estimateExprComplexity(item.value), 0)
+        + estimateExprComplexity(generator.condition)
+        + generator.updates.reduce((sum, item) => sum + estimateExprComplexity(item.value), 0)
+        + estimateListCompComplexity(generator.body);
+    case "lcIf":
+      return 1 + estimateExprComplexity(generator.condition) + estimateListCompComplexity(generator.ifTrue) + (generator.ifFalse ? estimateListCompComplexity(generator.ifFalse) : 0);
+    case "lcLet":
+      return 1 + generator.assignments.reduce((sum, item) => sum + estimateExprComplexity(item.value), 0) + estimateListCompComplexity(generator.body);
+    case "lcExpr":
+      return 1 + estimateExprComplexity(generator.expr);
+    default:
+      return 1;
+  }
+}
+
+function estimateStatementComplexity(stmt: Statement): number {
+  switch (stmt.kind) {
+    case "empty":
+    case "use":
+    case "include":
+      return 1;
+    case "variableDecl":
+      return 1 + estimateExprComplexity(stmt.value);
+    case "functionDecl":
+      return 1 + stmt.params.reduce((sum, item) => sum + (item.defaultValue ? estimateExprComplexity(item.defaultValue) : 0), 0) + estimateExprComplexity(stmt.body);
+    case "moduleDecl":
+      return 1 + stmt.params.reduce((sum, item) => sum + (item.defaultValue ? estimateExprComplexity(item.defaultValue) : 0), 0) + estimateStatementComplexity(stmt.body);
+    case "moduleCall":
+      return 1 + stmt.args.reduce((sum, arg) => sum + estimateExprComplexity(arg.value), 0) + (stmt.child ? estimateStatementComplexity(stmt.child) : 0);
+    case "block":
+      return 1 + stmt.statements.reduce((sum, item) => sum + estimateStatementComplexity(item), 0);
+    case "for":
+      return 1 + stmt.variables.reduce((sum, item) => sum + estimateExprComplexity(item.range), 0) + estimateStatementComplexity(stmt.body);
+    case "if":
+      return 1 + estimateExprComplexity(stmt.condition) + estimateStatementComplexity(stmt.thenBody) + (stmt.elseBody ? estimateStatementComplexity(stmt.elseBody) : 0);
+    default:
+      return 1;
+  }
+}
+
+function exprUsesModuleScope(expr: Expr): boolean {
+  switch (expr.kind) {
+    case "identifier":
+      return expr.name === "$children";
+    case "number":
+    case "string":
+    case "boolean":
+    case "undef":
+      return false;
+    case "vector":
+      return expr.elements.some(exprUsesModuleScope);
+    case "range":
+      return exprUsesModuleScope(expr.start) || exprUsesModuleScope(expr.end) || (expr.step ? exprUsesModuleScope(expr.step) : false);
+    case "binary":
+      return exprUsesModuleScope(expr.left) || exprUsesModuleScope(expr.right);
+    case "unary":
+      return exprUsesModuleScope(expr.operand);
+    case "ternary":
+      return exprUsesModuleScope(expr.condition) || exprUsesModuleScope(expr.ifTrue) || exprUsesModuleScope(expr.ifFalse);
+    case "call":
+      return expr.args.some(arg => exprUsesModuleScope(arg.value));
+    case "index":
+      return exprUsesModuleScope(expr.object) || exprUsesModuleScope(expr.index);
+    case "member":
+      return exprUsesModuleScope(expr.object);
+    case "group":
+      return exprUsesModuleScope(expr.expr);
+    case "echo":
+    case "assert":
+      return expr.args.some(arg => exprUsesModuleScope(arg.value)) || exprUsesModuleScope(expr.expr);
+    case "let":
+      return expr.assignments.some(item => exprUsesModuleScope(item.value)) || exprUsesModuleScope(expr.body);
+    case "listComp":
+      return listCompUsesModuleScope(expr.generator);
+    case "each":
+      return exprUsesModuleScope(expr.expr);
+    case "lambda":
+      return expr.params.some(item => item.defaultValue ? exprUsesModuleScope(item.defaultValue) : false) || exprUsesModuleScope(expr.body);
+    case "dynCall":
+      return exprUsesModuleScope(expr.callee) || expr.args.some(arg => exprUsesModuleScope(arg.value));
+    default:
+      return false;
+  }
+}
+
+function listCompUsesModuleScope(generator: ListCompGenerator): boolean {
+  switch (generator.kind) {
+    case "lcFor":
+      return generator.variables.some(item => exprUsesModuleScope(item.range)) || listCompUsesModuleScope(generator.body);
+    case "lcCFor":
+      return generator.inits.some(item => exprUsesModuleScope(item.value))
+        || exprUsesModuleScope(generator.condition)
+        || generator.updates.some(item => exprUsesModuleScope(item.value))
+        || listCompUsesModuleScope(generator.body);
+    case "lcIf":
+      return exprUsesModuleScope(generator.condition)
+        || listCompUsesModuleScope(generator.ifTrue)
+        || (generator.ifFalse ? listCompUsesModuleScope(generator.ifFalse) : false);
+    case "lcLet":
+      return generator.assignments.some(item => exprUsesModuleScope(item.value)) || listCompUsesModuleScope(generator.body);
+    case "lcExpr":
+      return exprUsesModuleScope(generator.expr);
+    default:
+      return false;
+  }
+}
+
+function statementUsesModuleScope(stmt: Statement): boolean {
+  switch (stmt.kind) {
+    case "empty":
+    case "use":
+    case "include":
+      return false;
+    case "variableDecl":
+      return exprUsesModuleScope(stmt.value);
+    case "functionDecl":
+      return stmt.params.some(item => item.defaultValue ? exprUsesModuleScope(item.defaultValue) : false) || exprUsesModuleScope(stmt.body);
+    case "moduleDecl":
+      return stmt.params.some(item => item.defaultValue ? exprUsesModuleScope(item.defaultValue) : false) || statementUsesModuleScope(stmt.body);
+    case "moduleCall":
+      return stmt.name === "children"
+        || stmt.args.some(arg => exprUsesModuleScope(arg.value))
+        || (stmt.child ? statementUsesModuleScope(stmt.child) : false);
+    case "block":
+      return stmt.statements.some(statementUsesModuleScope);
+    case "for":
+      return stmt.variables.some(item => exprUsesModuleScope(item.range)) || statementUsesModuleScope(stmt.body);
+    case "if":
+      return exprUsesModuleScope(stmt.condition) || statementUsesModuleScope(stmt.thenBody) || (stmt.elseBody ? statementUsesModuleScope(stmt.elseBody) : false);
+    default:
+      return false;
+  }
+}
+
+function shouldInlineModuleToIR(decl: ModuleDeclStmtType, ctx: IRLowerContext): boolean {
+  if (ctx.callStack.length >= MAX_IR_INLINE_DEPTH) return false;
+  if (statementUsesModuleScope(decl.body)) return false;
+  return estimateStatementComplexity(decl.body) <= MAX_IR_INLINE_COMPLEXITY;
+}
+
 function compileArgList(name: string, args: Argument[]): string {
   const sig = signatures.get(name);
   if (!sig) {
@@ -349,9 +326,9 @@ function compileArgList(name: string, args: Argument[]): string {
   const extraArgs: string[] = [];
 
   let pos = 0;
-  while (pos < args.length && !args[pos].name) {
-    if (pos < sig.params.length) compiledArgs[pos] = compileExpr(args[pos].value);
-    else extraArgs.push(compileExpr(args[pos].value));
+  while (pos < args.length && !args[pos]!.name) {
+    if (pos < sig.params.length) compiledArgs[pos] = compileExpr(args[pos]!.value);
+    else extraArgs.push(compileExpr(args[pos]!.value));
     pos++;
   }
 
@@ -373,7 +350,7 @@ function compileArgList(name: string, args: Argument[]): string {
   return compiledArgs.concat(extraArgs).join(", ");
 }
 
-// OpenSCAD built-in function names (separate namespace from variables)
+// OpenSCAD built-in function names
 const BUILTIN_FUNCTIONS = new Set([
   "is_undef", "is_bool", "is_num", "is_string", "is_list", "is_function",
   "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
@@ -426,6 +403,7 @@ export function compile(program: Program): string {
     signatures.set(k, { params: v });
   }
   collectSignatures(program.statements);
+  moduleDeclRegistry = collectModuleDeclarations(program.statements);
 
   // Build declarations, deduplicating by output name (last wins, matching OpenSCAD semantics)
   const declMap = new Map<string, string>();
@@ -458,10 +436,21 @@ export function compile(program: Program): string {
 
   const declarations = declOrder.map(k => declMap.get(k)!);
 
-  let output = `import Module from "manifold-3d";\nconst wasm = await Module();\nwasm.setup();\nconst { Manifold, CrossSection } = wasm;\n\n`;
+  const RUNTIME_IMPORT =
+    `import * as __rt from "./runtime.js";\n` +
+    `const { Manifold, CrossSection, wasm, is_undef_fn, is_bool_fn, is_num_fn, is_string_fn, is_list_fn, is_function_fn, ` +
+    `sin_fn, cos_fn, tan_fn, asin_fn, acos_fn, atan_fn, atan2_fn, abs_fn, sign_fn, floor_fn, ceil_fn, round_fn, sqrt_fn, exp_fn, ln_fn, log_fn, ` +
+    `min_fn, max_fn, norm_fn, cross_fn, len_fn, str_fn, chr_fn, ord_fn, concat_fn, search_fn, lookup_fn, openscad_assert_fn, ` +
+    `__eq, __add, __sub, __mul, __div, __mod, __neg, __pos, version_fn, version_num_fn, ` +
+    `__children_stack, __with_children, ` +
+    `__is_finite_matrix4, __to_manifold_mat4, __safe_transform, __identity4, __safe_attach_transform, __safe_offset2d, __safe_project3d, __apply_color, __flat_map_iter, __range, __union2d3d, __difference2d3d, __intersection2d3d, __hull2d3d, __minkowski2d3d } = __rt;\n` +
+    `var PI = __rt.PI;\n` +
+    `var INF = __rt.INF;\n` +
+    `var NAN = __rt.NAN;\n` +
+    `var undef = __rt.undef;\n` +
+    `var _EPSILON = __rt._EPSILON;\n\n`;
 
-  // Inline the OpenSCAD runtime
-  output += getRuntime() + "\n\n";
+  let output = RUNTIME_IMPORT;
 
   if (declarations.length) {
     output += declarations.join("\n") + "\n\n";
@@ -489,10 +478,22 @@ export function compile(program: Program): string {
   if (geometries.length === 1) {
     output += `export const result = ${geometries[0]};`;
   } else {
-    output += `export const result = Manifold.union([\n  ${geometries.join(",\n  ")}\n]);`;
+    output += `export const result = __union2d3d([\n  ${geometries.join(",\n  ")}\n]);`;
   }
 
   return output;
+}
+
+// build geometry IR trees from top level statements
+export function buildProgramIR(program: Program): IRNode[] {
+  const modules = collectModuleDeclarations(program.statements);
+  const ctx = baseIRContext(modules);
+  const out: IRNode[] = [];
+  for (const stmt of program.statements) {
+    const ir = lowerGeometryToIR(stmt, ctx);
+    if (ir && ir.kind !== "empty") out.push(ir);
+  }
+  return out;
 }
 
 // Declarations
@@ -516,7 +517,7 @@ function compileDeclaration(stmt: Statement): string {
     }
 
     default:
-      return `/* unsupported declaration: ${(stmt as Statement).kind} */`;
+      return `/* unsupported declaration: ${(stmt as Statement).kind}${locTag(stmt)} */`;
   }
 }
 
@@ -524,7 +525,7 @@ function compileDeclaration(stmt: Statement): string {
 function deduplicateParams(params: import("./ast.js").Parameter[]): import("./ast.js").Parameter[] {
   const seen = new Map<string, number>();
   for (let i = 0; i < params.length; i++) {
-    seen.set(params[i].name, i);
+    seen.set(params[i]!.name, i);
   }
   return params.filter((p, i) => seen.get(p.name) === i);
 }
@@ -585,26 +586,13 @@ function compileModuleBody(body: Statement, moduleName?: string, localParamNames
   if (geoExprs.length === 0) {
     result = "Manifold.union([])";
   } else if (geoExprs.length === 1) {
-    result = geoExprs[0];
+    result = geoExprs[0]!;
   } else {
-    result = `Manifold.union([\n    ${geoExprs.join(",\n    ")}\n  ])`;
-  }
-
-  if (moduleName === "attachable") {
-    result = `(() => {\n` +
-      `    const __out = ${result};\n` +
-      `    try {\n` +
-      `      const __mesh = __out.getMesh({});\n` +
-      `      if (__mesh.numVert === 0 || __mesh.numTri === 0) {\n` +
-      `        return children(0);\n` +
-      `      }\n` +
-      `    } catch {}\n` +
-      `    return __out;\n` +
-      `  })()`;
+    result = `__union2d3d([\n    ${geoExprs.join(",\n    ")}\n  ])`;
   }
 
   if (dollarRestores.length > 0) {
-    // Insert saves at the beginning (after children setup)
+    // Insert saves at the beginning
     lines.splice(3, 0, ...dollarSaves);
     lines.push(`  try {`);
     lines.push(`    return ${result};`);
@@ -619,6 +607,483 @@ function compileModuleBody(body: Statement, moduleName?: string, localParamNames
 
 // Geometry compilation
 function compileGeometry(stmt: Statement): string {
+  if (statementUsesModuleScope(stmt)) {
+    return compileGeometryLegacy(stmt);
+  }
+
+  const ir = lowerGeometryToIR(stmt, baseIRContext());
+  if (ir) {
+    try {
+      return compileIRNode(ir);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        return compileGeometryLegacy(stmt);
+      }
+      throw error;
+    }
+  }
+  return compileGeometryLegacy(stmt);
+}
+
+const IR_PRIMITIVES = new Set([
+  "cube", "sphere", "cylinder", "circle", "square", "polygon", "polyhedron", "text",
+]);
+
+const IR_TRANSFORMS = new Set([
+  "translate", "rotate", "scale", "mirror", "multmatrix", "resize", "offset", "color", "render", "projection",
+]);
+
+const IR_BOOLEANS = new Set(["union", "difference", "intersection", "hull", "minkowski"]);
+
+function wrapWithLetBindings(node: IRNode, bindings: Argument[], loc?: ASTNode["loc"]): IRNode {
+  if (bindings.length === 0) return node;
+  return {
+    kind: "moduleCall",
+    name: "let",
+    args: bindings,
+    children: [node],
+    loc,
+  } as IRModuleCallNode;
+}
+
+function resolveChildrenReference(
+  args: Argument[],
+  boundChildren: IRNode[],
+  loc?: ASTNode["loc"],
+): IRNode {
+  if (boundChildren.length === 0) return { kind: "empty", loc };
+
+  const iArg = findArg(args, "i", 0);
+  if (!iArg) {
+    if (boundChildren.length === 1) return boundChildren[0]!;
+    return { kind: "sequence", items: boundChildren, loc } as IRSequenceNode;
+  }
+
+  if (iArg.value.kind === "number") {
+    const idx = Math.trunc(iArg.value.value);
+    if (idx < 0 || idx >= boundChildren.length) return { kind: "empty", loc };
+    return boundChildren[idx]!;
+  }
+
+  let out: IRNode = { kind: "empty", loc };
+  for (let idx = boundChildren.length - 1; idx >= 0; idx--) {
+    out = {
+      kind: "if",
+      condition: {
+        kind: "binary",
+        op: "==",
+        left: iArg.value,
+        right: { kind: "number", value: idx },
+      },
+      thenNode: boundChildren[idx]!,
+      elseNode: out,
+      loc,
+    } as IRIfNode;
+  }
+  return out;
+}
+
+function buildModuleParamBindings(
+  params: import("./ast.js").Parameter[],
+  callArgs: Argument[],
+): Argument[] {
+  const deduped = deduplicateParams(params);
+  const bound = new Map<string, Expr>();
+
+  for (const p of deduped) {
+    bound.set(p.name, p.defaultValue ?? { kind: "undef" });
+  }
+
+  let pos = 0;
+  while (pos < callArgs.length && !callArgs[pos]!.name) {
+    if (pos < deduped.length) {
+      bound.set(deduped[pos]!.name, callArgs[pos]!.value);
+    }
+    pos++;
+  }
+
+  for (let i = pos; i < callArgs.length; i++) {
+    const a = callArgs[i]!;
+    if (a.name && bound.has(a.name)) {
+      bound.set(a.name, a.value);
+    }
+  }
+
+  return deduped.map((p) => ({ name: p.name, value: bound.get(p.name)! }));
+}
+
+function tryExpandUserModuleCallToIR(
+  stmt: ModuleCallStmt,
+  decl: ModuleDeclStmtType,
+  loweredChildren: IRNode[],
+  ctx: IRLowerContext,
+): IRNode | undefined {
+  const paramBindings = buildModuleParamBindings(decl.params, stmt.args);
+  const innerCtx: IRLowerContext = {
+    modules: ctx.modules,
+    children: loweredChildren,
+    callStack: [...ctx.callStack, decl.name],
+  };
+
+  const loweredBody = lowerGeometryToIR(decl.body, innerCtx);
+  if (!loweredBody) return undefined;
+  return wrapWithLetBindings(loweredBody, paramBindings, stmt.loc);
+}
+
+function lowerGeometryToIR(stmt: Statement, ctx: IRLowerContext): IRNode | undefined {
+  switch (stmt.kind) {
+    case "moduleCall":
+      return lowerModuleCallToIR(stmt, ctx);
+    case "block": {
+      const items: IRNode[] = [];
+      const letBindings: Argument[] = [];
+      let activeModules = new Map(ctx.modules);
+
+      for (const s of stmt.statements) {
+        if (s.kind === "empty" || s.kind === "use" || s.kind === "include") continue;
+
+        if (s.kind === "variableDecl") {
+          letBindings.push({ name: s.name, value: s.value });
+          continue;
+        }
+
+        if (s.kind === "moduleDecl") {
+          activeModules.set(s.name, s);
+          continue;
+        }
+
+        if (s.kind === "functionDecl") {
+          return undefined;
+        }
+
+        const lowered = lowerGeometryToIR(s, { ...ctx, modules: activeModules });
+        if (!lowered) return undefined;
+        if (lowered.kind !== "empty") items.push(wrapWithLetBindings(lowered, letBindings, s.loc));
+      }
+      return { kind: "sequence", items, loc: stmt.loc } as IRSequenceNode;
+    }
+    case "for": {
+      const body = lowerGeometryToIR(stmt.body, ctx);
+      if (!body) return undefined;
+      return { kind: "for", variables: stmt.variables, body, loc: stmt.loc } as IRForNode;
+    }
+    case "if": {
+      const thenNode = lowerGeometryToIR(stmt.thenBody, ctx);
+      if (!thenNode) return undefined;
+      const elseNode = stmt.elseBody ? lowerGeometryToIR(stmt.elseBody, ctx) : undefined;
+      if (stmt.elseBody && !elseNode) return undefined;
+      return { kind: "if", condition: stmt.condition, thenNode, elseNode, loc: stmt.loc } as IRIfNode;
+    }
+    case "empty":
+      return { kind: "empty", loc: stmt.loc };
+    case "variableDecl":
+    case "moduleDecl":
+    case "functionDecl":
+    case "use":
+    case "include":
+      return { kind: "empty", loc: stmt.loc };
+    default:
+      return undefined;
+  }
+}
+
+function lowerModuleCallToIR(stmt: ModuleCallStmt, ctx: IRLowerContext): IRNode | undefined {
+  const name = stmt.name;
+  const children = lowerModuleChildrenToIR(stmt.child, ctx);
+  if (stmt.child && !children) return undefined;
+  const loweredChildren = children ?? [];
+
+  if (!ctx.callStack.includes(name)) {
+    const decl = ctx.modules.get(name);
+    if (decl && shouldInlineModuleToIR(decl, ctx)) {
+      const expanded = tryExpandUserModuleCallToIR(stmt, decl, loweredChildren, ctx);
+      if (expanded) return expanded;
+    }
+  }
+
+  if (name === "children") {
+    return resolveChildrenReference(stmt.args, ctx.children, stmt.loc);
+  }
+
+  if (IR_PRIMITIVES.has(name)) {
+    return {
+      kind: "primitive",
+      primitive: name as IRPrimitiveNode["primitive"],
+      args: stmt.args,
+      loc: stmt.loc,
+    };
+  }
+
+  if (IR_TRANSFORMS.has(name)) {
+    const child = loweredChildren.length === 1
+      ? loweredChildren[0]!
+      : ({ kind: "sequence", items: loweredChildren, loc: stmt.loc } as IRSequenceNode);
+    return {
+      kind: "transform",
+      transform: name as IRTransformNode["transform"],
+      args: stmt.args,
+      child,
+      loc: stmt.loc,
+    };
+  }
+
+  if (IR_BOOLEANS.has(name)) {
+    return {
+      kind: "boolean",
+      op: name as IRBooleanNode["op"],
+      children: loweredChildren,
+      loc: stmt.loc,
+    };
+  }
+
+  return {
+    kind: "moduleCall",
+    name,
+    args: stmt.args,
+    children: loweredChildren,
+    loc: stmt.loc,
+  } as IRModuleCallNode;
+}
+
+function lowerModuleChildrenToIR(child: Statement | undefined, ctx: IRLowerContext): IRNode[] | undefined {
+  if (!child || child.kind === "empty") return [];
+  if (child.kind === "block") {
+    const items: IRNode[] = [];
+    for (const s of child.statements) {
+      const lowered = lowerGeometryToIR(s, ctx);
+      if (!lowered) return undefined;
+      if (lowered.kind !== "empty") items.push(lowered);
+    }
+    return items;
+  }
+  const lowered = lowerGeometryToIR(child, ctx);
+  if (!lowered) return undefined;
+  return lowered.kind === "empty" ? [] : [lowered];
+}
+
+function compileIRNode(node: IRNode): string {
+  switch (node.kind) {
+    case "empty":
+      return "Manifold.union([])";
+
+    case "primitive":
+      return compileIRPrimitive(node);
+
+    case "transform":
+      return compileIRTransform(node);
+
+    case "boolean":
+      return compileIRBoolean(node);
+
+    case "moduleCall":
+      return compileIRModuleCall(node);
+
+    case "children":
+      return node.indexExpr ? `children(${compileExpr(node.indexExpr)})` : "children()";
+
+    case "sequence": {
+      const items = node.items
+        .map(compileIRNode)
+        .filter(x => x && x !== "Manifold.union([])");
+      if (items.length === 0) return "Manifold.union([])";
+      if (items.length === 1) return items[0]!;
+      return `__union2d3d([\n  ${items.join(",\n  ")}\n])`;
+    }
+
+    case "if": {
+      const cond = compileExpr(node.condition);
+      const thenNode = compileIRNode(node.thenNode);
+      const elseNode = node.elseNode ? compileIRNode(node.elseNode) : "Manifold.union([])";
+      return `(${cond} ? ${thenNode} : ${elseNode})`;
+    }
+
+    case "for":
+      return buildNestedFor(node.variables, 0, compileIRNode(node.body));
+
+    case "astFallback":
+      return compileGeometryLegacy(node.statement);
+
+    default:
+      return `/* unsupported ir node */`;
+  }
+}
+
+function compileIRPrimitive(node: IRPrimitiveNode): string {
+  switch (node.primitive) {
+    case "cube": return compileCube(node.args);
+    case "sphere": return compileSphere(node.args);
+    case "cylinder": return compileCylinder(node.args);
+    case "circle": return compileCircle(node.args);
+    case "square": return compileSquare(node.args);
+    case "polygon": return compilePolygon(node.args);
+    case "polyhedron": return compilePolyhedron(node.args);
+    case "text": return compileText(node.args);
+    default: return "/* unsupported primitive */";
+  }
+}
+
+function compileIRTransform(node: IRTransformNode): string {
+  const child = compileIRNode(node.child);
+  switch (node.transform) {
+    case "translate":
+      return `${child}.translate(${node.args[0] ? compileExpr(node.args[0].value) : "[0, 0, 0]"})`;
+    case "rotate":
+      return `${child}.rotate(${node.args[0] ? compileExpr(node.args[0].value) : "0"})`;
+    case "scale":
+      return `${child}.scale(${node.args[0] ? compileExpr(node.args[0].value) : "[1, 1, 1]"})`;
+    case "mirror":
+      return `${child}.mirror(${node.args[0] ? compileExpr(node.args[0].value) : "[1, 0, 0]"})`;
+    case "multmatrix":
+      return node.args[0] ? `__safe_transform(${child}, ${compileExpr(node.args[0].value)})` : child;
+    case "resize":
+      return `/* resize(${node.args.map(a => compileExpr(a.value)).join(", ")}) */ ${child}`;
+    case "offset": {
+      const r = findArg(node.args, "r", 0);
+      const delta = findArg(node.args, "delta");
+      const amount = r ?? delta;
+      const amt = amount ? compileExpr(amount.value) : "0";
+      return `__safe_offset2d(${child}, ${amt})`;
+    }
+    case "color": {
+      const c = findArg(node.args, "c", 0);
+      const alpha = findArg(node.args, "alpha", 1);
+      const cExpr = c ? compileExpr(c.value) : "undefined";
+      const aExpr = alpha ? compileExpr(alpha.value) : "undefined";
+      return `__apply_color(${child}, ${cExpr}, ${aExpr})`;
+    }
+    case "render":
+      return `/* render(${node.args.map(a => compileExpr(a.value)).join(", ")}) */ ${child}`;
+    case "projection":
+      return `__safe_project3d(${child})`;
+    default:
+      return child;
+  }
+}
+
+function compileIRBoolean(node: IRBooleanNode): string {
+  const children = node.children
+    .map(compileIRNode)
+    .filter(x => x && x !== "Manifold.union([])");
+
+  if (children.length === 0) return "Manifold.union([])";
+  if (children.length === 1) return children[0]!;
+
+  switch (node.op) {
+    case "union":
+      return `__union2d3d([\n  ${children.join(",\n  ")}\n])`;
+    case "difference": {
+      const [first, ...rest] = children;
+      return `__difference2d3d(${first}, [\n  ${rest.join(",\n  ")}\n])`;
+    }
+    case "intersection":
+      return `__intersection2d3d([\n  ${children.join(",\n  ")}\n])`;
+    case "hull":
+      return `__hull2d3d([\n  ${children.join(",\n  ")}\n])`;
+    case "minkowski":
+      return `__minkowski2d3d([\n  ${children.join(",\n  ")}\n])`;
+    default:
+      return `Manifold.union([\n  ${children.join(",\n  ")}\n])`;
+  }
+}
+
+function buildWithChildrenCall(callExpr: string, children: string[]): string {
+  if (children.length === 0) {
+    return `__with_children(() => Manifold.union([]), 0, () => ${callExpr})`;
+  }
+
+  return `(() => { ` +
+    `const __childFns = [\n  ${children.map(child => `() => (${child})`).join(",\n  ")}\n]; ` +
+    `return __with_children((i) => (` +
+    `i === undefined ? __union2d3d(__childFns.map(fn => fn())) : ` +
+    `((i >= 0 && i < __childFns.length) ? __childFns[i]() : Manifold.union([]))` +
+    `), __childFns.length, () => ${callExpr}); ` +
+    `})()`;
+}
+
+function compileIRModuleCall(node: IRModuleCallNode): string {
+  switch (node.name) {
+    case "linear_extrude": {
+      const child = node.children.length === 0
+        ? "Manifold.union([])"
+        : node.children.length === 1
+          ? compileIRNode(node.children[0]!)
+          : `__union2d3d([\n  ${node.children.map(compileIRNode).join(",\n  ")}\n])`;
+      const height = findArg(node.args, "height", 0);
+      const hStr = height ? compileExpr(height.value) : "1";
+      const twist = findArg(node.args, "twist");
+      const slices = findArg(node.args, "slices");
+      const opts: string[] = [];
+      if (twist) opts.push(`twist: ${compileExpr(twist.value)}`);
+      if (slices) opts.push(`nDivisions: ${compileExpr(slices.value)}`);
+      return opts.length
+        ? `Manifold.extrude(${child}, ${hStr}, { ${opts.join(", ")} })`
+        : `Manifold.extrude(${child}, ${hStr})`;
+    }
+
+    case "rotate_extrude": {
+      const child = node.children.length === 0
+        ? "Manifold.union([])"
+        : node.children.length === 1
+          ? compileIRNode(node.children[0]!)
+          : `__union2d3d([\n  ${node.children.map(compileIRNode).join(",\n  ")}\n])`;
+      const fn = findArg(node.args, "$fn");
+      return `Manifold.revolve(${child}${fn ? `, ${compileExpr(fn.value)}` : ""})`;
+    }
+
+    case "echo": {
+      const args = node.args.map(a =>
+        a.name ? `"${a.name} = ", ${compileExpr(a.value)}` : compileExpr(a.value)
+      ).join(", ");
+      const child = node.children.length === 0
+        ? "Manifold.union([])"
+        : node.children.length === 1
+          ? compileIRNode(node.children[0]!)
+          : `__union2d3d([\n  ${node.children.map(compileIRNode).join(",\n  ")}\n])`;
+      return `(console.log(${args}), ${child})`;
+    }
+
+    case "assert": {
+      const condition = node.args[0] ? compileExpr(node.args[0].value) : "true";
+      const message = node.args[1] ? compileExpr(node.args[1].value) : '"Assertion failed"';
+      const child = node.children.length === 0
+        ? "Manifold.union([])"
+        : node.children.length === 1
+          ? compileIRNode(node.children[0]!)
+          : `__union2d3d([\n  ${node.children.map(compileIRNode).join(",\n  ")}\n])`;
+      return `(openscad_assert_fn(${condition}, ${message}), ${child})`;
+    }
+
+    case "let": {
+      let child = node.children.length === 0
+        ? "Manifold.union([])"
+        : node.children.length === 1
+          ? compileIRNode(node.children[0]!)
+          : `__union2d3d([\n  ${node.children.map(compileIRNode).join(",\n  ")}\n])`;
+      for (let i = node.args.length - 1; i >= 0; i--) {
+        const a = node.args[i]!;
+        const name = a.name ? escapeName(a.name) : "_";
+        child = `((${name}) => (${child}))(${compileExpr(a.value)})`;
+      }
+      return child;
+    }
+
+    default: {
+      if (!moduleDeclRegistry.has(node.name)) {
+        const line = node.loc?.start.line;
+        const where = line ? ` at line ${line}` : "";
+        console.warn(`Warning: Ignoring unknown module '${node.name}'${where}`);
+        return "Manifold.union([])";
+      }
+
+      const callName = `${escapeName(node.name)}$mod`;
+      const argList = compileArgList(callName, node.args);
+      const children = node.children.map(compileIRNode).filter(Boolean);
+      return buildWithChildrenCall(`${callName}(${argList})`, children);
+    }
+  }
+}
+
+function compileGeometryLegacy(stmt: Statement): string {
   switch (stmt.kind) {
     case "moduleCall":
       return compileModuleCall(stmt);
@@ -641,7 +1106,7 @@ function compileGeometry(stmt: Statement): string {
     case "include":
       return "";
     default:
-      return `/* unsupported: ${(stmt as Statement).kind} */`;
+      return `/* unsupported: ${(stmt as Statement).kind}${locTag(stmt)} */`;
   }
 }
 
@@ -666,7 +1131,7 @@ function compileModuleCall(stmt: ModuleCallStmt): string {
     case "multmatrix": return compileMultMatrix(stmt);
     case "resize": return compilePassthrough(stmt, "resize");
     case "offset": return compileOffset(stmt);
-    case "color": return compilePassthrough(stmt, "color");
+    case "color": return compileColor(stmt);
     case "render": return compilePassthrough(stmt, "render");
     case "projection": return compileProjection(stmt);
 
@@ -681,7 +1146,7 @@ function compileModuleCall(stmt: ModuleCallStmt): string {
     case "linear_extrude": return compileLinearExtrude(stmt);
     case "rotate_extrude": return compileRotateExtrude(stmt);
 
-    // Built-in statement modifiers
+    // Builtin statement modifiers
     case "echo": return compileEchoModule(stmt);
     case "assert": return compileAssertModule(stmt);
     case "let": return compileLetModule(stmt);
@@ -692,7 +1157,7 @@ function compileModuleCall(stmt: ModuleCallStmt): string {
   }
 }
 
-// Built-in module helpers
+// Builtin module helpers
 function compileEchoModule(stmt: ModuleCallStmt): string {
   const args = stmt.args.map(a =>
     a.name ? `"${a.name} = ", ${compileExpr(a.value)}` : compileExpr(a.value)
@@ -730,13 +1195,12 @@ function compileLetModule(stmt: ModuleCallStmt): string {
 
 function compileChildrenModule(stmt: ModuleCallStmt): string {
   if (stmt.args.length > 0) {
-    return `children(${compileExpr(stmt.args[0].value)})`;
+    return `children(${compileExpr(stmt.args[0]!.value)})`;
   }
   return `children()`;
 }
 
 // Primitive compilation
-
 function compileCube(args: Argument[]): string {
   const size = findArg(args, "size", 0);
   const center = findArg(args, "center", 1);
@@ -744,7 +1208,7 @@ function compileCube(args: Argument[]): string {
   const sizeStr = size ? compileExpr(size.value) : "1";
   const centerStr = center ? compileExpr(center.value) : "false";
 
-  // `size` can be a scalar or a runtime vector expression.
+  // `size` can be a scalar or a runtime vector expression
   return `((__s) => Manifold.cube((is_list_fn(__s) ? __s : [__s, __s, __s]), ${centerStr}))(${sizeStr})`;
 }
 
@@ -820,7 +1284,7 @@ function compileSquare(args: Argument[]): string {
   const sizeStr = size ? compileExpr(size.value) : "1";
   const centerStr = center ? compileExpr(center.value) : "false";
 
-  // `size` can be a scalar or a runtime vector expression.
+  // `size` can be a scalar or a runtime vector expression
   return `((__s) => CrossSection.square((is_list_fn(__s) ? __s : [__s, __s]), ${centerStr}))(${sizeStr})`;
 }
 
@@ -836,7 +1300,6 @@ function compileText(args: Argument[]): string {
   const txt = textArg ? compileExpr(textArg.value) : `""`;
   const size = sizeArg ? compileExpr(sizeArg.value) : "10";
 
-  // Manifold doesn't expose font text primitives; approximate with a sized box.
   return `((__t, __s) => CrossSection.square([Math.max(0.001, len_fn(str_fn(__t)) * __s * 0.6), Math.max(0.001, __s)], false))(${txt}, ${size})`;
 }
 
@@ -852,7 +1315,7 @@ function compileTransform(
   stmt: ModuleCallStmt,
   method: string,
 ): string {
-  if (!stmt.child) return `/* ${method} with no child */`;
+  if (!stmt.child) return "Manifold.union([])";
 
   const child = compileGeometry(stmt.child);
   const vec = stmt.args[0];
@@ -862,7 +1325,7 @@ function compileTransform(
 }
 
 function compileMirror(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* mirror with no child */";
+  if (!stmt.child) return "Manifold.union([])";
   const child = compileGeometry(stmt.child);
   const vec = stmt.args[0];
   if (!vec) return `${child}.mirror([1, 0, 0])`;
@@ -870,20 +1333,30 @@ function compileMirror(stmt: ModuleCallStmt): string {
 }
 
 function compileMultMatrix(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* multmatrix with no child */";
+  if (!stmt.child) return "Manifold.union([])";
   const child = compileGeometry(stmt.child);
   const mat = stmt.args[0];
   if (!mat) return `${child}`;
   return `__safe_transform(${child}, ${compileExpr(mat.value)})`;
 }
 
+function compileColor(stmt: ModuleCallStmt): string {
+  if (!stmt.child) return "Manifold.union([])";
+  const child = compileGeometry(stmt.child);
+  const c = findArg(stmt.args, "c", 0);
+  const alpha = findArg(stmt.args, "alpha", 1);
+  const cExpr = c ? compileExpr(c.value) : "undefined";
+  const aExpr = alpha ? compileExpr(alpha.value) : "undefined";
+  return `__apply_color(${child}, ${cExpr}, ${aExpr})`;
+}
+
 function compilePassthrough(stmt: ModuleCallStmt, tag: string): string {
-  if (!stmt.child) return `/* ${tag}() with no child */`;
+  if (!stmt.child) return "Manifold.union([])";
   return `/* ${tag}(${stmt.args.map(a => compileExpr(a.value)).join(", ")}) */ ${compileGeometry(stmt.child)}`;
 }
 
 function compileOffset(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* offset() with no child */";
+  if (!stmt.child) return "CrossSection.square(0)";
   const child = compileGeometry(stmt.child);
   const r = findArg(stmt.args, "r", 0);
   const delta = findArg(stmt.args, "delta");
@@ -893,10 +1366,10 @@ function compileOffset(stmt: ModuleCallStmt): string {
 }
 
 function compileProjection(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* projection() with no child */";
+  if (!stmt.child) return "CrossSection.square(0)";
   const child = compileGeometry(stmt.child);
-  // Projection is 2D in OpenSCAD; emit a thin manifold so geometry pipelines remain 3D-safe.
-  return `Manifold.extrude(__safe_project3d(${child}), 0.001, 0, 0, [1, 1], true)`;
+  if (child === "Manifold.union([])") return "CrossSection.square(0)";
+  return `__safe_project3d(${child})`;
 }
 
 // Boolean / collection 
@@ -909,7 +1382,7 @@ function collectChildren(stmt: ModuleCallStmt): string[] {
   return g ? [g] : [];
 }
 
-// Compile a mixed list of statements, separating declarations into an IIFE wrapper when needed.
+// Compile a mixed list of statements, separating declarations into an IIFE wrapper when needed
 function compileBlockStatements(stmts: Statement[]): string[] {
   const decls: string[] = [];
   const geos: string[] = [];
@@ -930,7 +1403,7 @@ function compileBlockStatements(stmts: Statement[]): string[] {
   if (decls.length > 0 && geos.length > 0) {
     const result = geos.length === 1
       ? geos[0]
-      : `Manifold.union([\n    ${geos.join(",\n    ")}\n  ])`;
+      : `__union2d3d([\n    ${geos.join(",\n    ")}\n  ])`;
     return [`(() => {\n  ${decls.join("\n  ")}\n  return ${result};\n})()`];
   }
 
@@ -939,34 +1412,34 @@ function compileBlockStatements(stmts: Statement[]): string[] {
 
 function compileBoolOp(stmt: ModuleCallStmt, op: string): string {
   const children = collectChildren(stmt);
-  if (children.length === 0) return `/* empty ${op} */`;
+  if (children.length === 0) return "Manifold.union([])";
   if (children.length === 1) return children[0]!;
+  if (op === "union") return `__union2d3d([\n  ${children.join(",\n  ")}\n])`;
+  if (op === "intersection") return `__intersection2d3d([\n  ${children.join(",\n  ")}\n])`;
+  if (op === "hull") return `__hull2d3d([\n  ${children.join(",\n  ")}\n])`;
   return `Manifold.${op}([\n  ${children.join(",\n  ")}\n])`;
 }
 
 function compileDifference(stmt: ModuleCallStmt): string {
   const children = collectChildren(stmt);
-  if (children.length === 0) return "/* empty difference */";
+  if (children.length === 0) return "Manifold.union([])";
   if (children.length === 1) return children[0]!;
 
   const [first, ...rest] = children;
-  if (rest.length === 1) {
-    return `${first}.subtract(${rest[0]})`;
-  }
-  return `${first}.subtract(Manifold.union([\n  ${rest.join(",\n  ")}\n]))`;
+  return `__difference2d3d(${first}, [\n  ${rest.join(",\n  ")}\n])`;
 }
 
 function compileMinkowski(stmt: ModuleCallStmt): string {
   const children = collectChildren(stmt);
-  if (children.length === 0) return "/* empty minkowski */";
+  if (children.length === 0) return "Manifold.union([])";
   if (children.length === 1) return children[0]!;
-  // Approximation: convex hull of inputs. Better than plain union for rounded-like intent.
-  return `Manifold.hull([\n  ${children.join(",\n  ")}\n])`;
+  return `__minkowski2d3d([\n  ${children.join(",\n  ")}\n])`;
 }
 
 function compileLinearExtrude(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* linear_extrude with no child */";
+  if (!stmt.child) return "Manifold.union([])";
   const child = compileGeometry(stmt.child);
+  if (child === "Manifold.union([])") return "Manifold.union([])";
   const height = findArg(stmt.args, "height", 0);
   const hStr = height ? compileExpr(height.value) : "1";
 
@@ -984,8 +1457,9 @@ function compileLinearExtrude(stmt: ModuleCallStmt): string {
 }
 
 function compileRotateExtrude(stmt: ModuleCallStmt): string {
-  if (!stmt.child) return "/* rotate_extrude with no child */";
+  if (!stmt.child) return "Manifold.union([])";
   const child = compileGeometry(stmt.child);
+  if (child === "Manifold.union([])") return "Manifold.union([])";
   const fn = findArg(stmt.args, "$fn");
 
   const segments = fn ? `, ${compileExpr(fn.value)}` : "";
@@ -1023,17 +1497,13 @@ function compileBlockGeometry(block: BlockStmt): string {
   const result =
     geos.length === 0 ? "Manifold.union([])"
       : geos.length === 1 ? geos[0]!
-        : `Manifold.union([\n  ${geos.join(",\n  ")}\n])`;
+        : `__union2d3d([\n  ${geos.join(",\n  ")}\n])`;
 
   // Collect declarations (var, dollar, func) in order
   const decls = items.filter(i => i.kind !== "geo");
   if (decls.length === 0) return result;
 
-  // Build inside-out: start with result, wrap with declarations from last to first.
-  // This implements OpenSCAD's cascading let semantics correctly:
-  // - Regular vars: ((name) => body)(expr) — captures outer value, no var hoisting issues
-  // - $ vars: save/assign/try-finally — dynamic scoping across function calls
-  // - func decls: wrapped in IIFE with the remaining body
+  // Build inside-out so OpenSCAD let() semantics work -> vars capture outer values, $vars use dynamic scoping, and functions wrap the remaining body.
   let body = result;
 
   for (let i = decls.length - 1; i >= 0; i--) {
@@ -1043,7 +1513,7 @@ function compileBlockGeometry(block: BlockStmt): string {
     } else if (d.kind === "dollar") {
       body = `(() => { var __save_${d.name} = ${d.name}; ${d.name} = ${d.code}; try { return ${body}; } finally { ${d.name} = __save_${d.name}; } })()`;
     } else {
-      // Function/module declaration: wrap remaining body in IIFE with the declaration
+      // Wrap remaining body in IIFE with the declaration
       body = `(() => {\n  ${d.code}\n  return ${body};\n})()`;
     }
   }
@@ -1066,7 +1536,7 @@ function buildNestedFor(vars: ForVariable[], idx: number, body: string): string 
     const start = compileExpr(v.range.start);
     const end = compileExpr(v.range.end);
     const step = v.range.step ? compileExpr(v.range.step) : "1";
-    return `Manifold.union((() => {\n` +
+    return `__union2d3d((() => {\n` +
       `  const __items = [];\n` +
       `  for (let ${escapeName(v.name)} = ${start}; ${escapeName(v.name)} <= ${end}; ${escapeName(v.name)} += ${step}) {\n` +
       `    __items.push(${inner});\n` +
@@ -1077,7 +1547,7 @@ function buildNestedFor(vars: ForVariable[], idx: number, body: string): string 
 
   // vector iteration
   const rangeExpr = compileExpr(v.range);
-  return `Manifold.union(__flat_map_iter(${rangeExpr}, (${escapeName(v.name)}) => [${inner}]))`;
+  return `__union2d3d(__flat_map_iter(${rangeExpr}, (${escapeName(v.name)}) => [${inner}]))`;
 }
 
 function compileIfGeometry(stmt: IfStmt): string {
@@ -1092,29 +1562,17 @@ function compileIfGeometry(stmt: IfStmt): string {
 
 // User module call
 function compileUserModuleCall(stmt: ModuleCallStmt): string {
-  const name = `${escapeName(stmt.name)}$mod`;
-  const argList = compileArgList(name, stmt.args);
-
-  let childCount = 0;
-  let childFn = "() => Manifold.union([])";
-
-  if (stmt.child && stmt.child.kind !== "empty") {
-    const children = collectChildren(stmt);
-    childCount = children.length;
-    if (childCount > 0) {
-      const indexedCases = children
-        .map((child, idx) => `if (i === ${idx}) return ${child};`)
-        .join(" ");
-      childFn =
-        `(i) => { ` +
-        `if (i === undefined) return Manifold.union([\n  ${children.join(",\n  ")}\n]); ` +
-        `${indexedCases} ` +
-        `return Manifold.union([]); ` +
-        `}`;
-    }
+  if (!moduleDeclRegistry.has(stmt.name)) {
+    const line = stmt.loc?.start.line;
+    const where = line ? ` at line ${line}` : "";
+    console.warn(`Warning: Ignoring unknown module '${stmt.name}'${where}`);
+    return "Manifold.union([])";
   }
 
-  return `__with_children(${childFn}, ${childCount}, () => ${name}(${argList}))`;
+  const name = `${escapeName(stmt.name)}$mod`;
+  const argList = compileArgList(name, stmt.args);
+  const children = stmt.child && stmt.child.kind !== "empty" ? collectChildren(stmt) : [];
+  return buildWithChildrenCall(`${name}(${argList})`, children);
 }
 
 // Expression compilation
@@ -1185,7 +1643,7 @@ function compileExpr(expr: Expr): string {
     }
     case "group": {
       const inner = compileExpr(expr.expr);
-      if (inner.startsWith("...")) return inner;  // Don't wrap spread in parens
+      if (inner.startsWith("...")) return inner;
       return `(${inner})`;
     }
     case "echo": {
@@ -1222,7 +1680,6 @@ function compileExpr(expr: Expr): string {
       return `(${params}) => ${bodyExpr}`;
     }
     case "listComp": {
-      // The generator now always returns an array. Since listComp is always an element of a vector, we must spread its result so the elements are spliced properly.
       return `...(${compileListComp(expr.generator)})`;
     }
     case "dynCall": {
@@ -1231,7 +1688,7 @@ function compileExpr(expr: Expr): string {
       return `(${callee})(${args})`;
     }
     default:
-      return `/* unsupported expr: ${(expr as Expr).kind} */`;
+      return `/* unsupported expr: ${(expr as Expr).kind}${locTag(expr as ASTNode)} */`;
   }
 }
 
